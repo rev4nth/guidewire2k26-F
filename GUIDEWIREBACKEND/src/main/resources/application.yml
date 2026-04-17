@@ -1,0 +1,6 @@
+# Cloudinary — rotate keys if they were exposed; override via env in production.
+app:
+  cloudinary:
+    cloud-name: dyuqqcewv
+    api-key: "515121515438561"
+    api-secret: "-W6iun_Y8SAcrmhtVLbwrPoyAxo"
