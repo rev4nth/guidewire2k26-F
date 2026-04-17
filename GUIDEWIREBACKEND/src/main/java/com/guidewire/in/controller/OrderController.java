@@ -8,16 +8,17 @@ import com.guidewire.in.repository.OrderRepository;
 import com.guidewire.in.repository.UserRepository;
 import com.guidewire.in.security.JwtFilter;
 import com.guidewire.in.service.LocationService;
+import com.guidewire.in.web.ApiResponseBuilder;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.RequestParam;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -56,40 +57,32 @@ public class OrderController {
 		);
 	}
 
-	/* ── ADMIN ── */
-
 	@PostMapping("/admin/send-order/{workerId}")
 	public ResponseEntity<?> sendOrder(HttpServletRequest req, @PathVariable Long workerId) {
-		if (!isAdmin(req)) return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+		if (!isAdmin(req)) return ApiResponseBuilder.fail(HttpStatus.FORBIDDEN, "Forbidden");
 		User worker = userRepository.findById(workerId).orElse(null);
-		if (worker == null) return ResponseEntity.notFound().build();
+		if (worker == null) return ApiResponseBuilder.fail(HttpStatus.NOT_FOUND, "Worker not found");
 		Order order = new Order();
 		order.setWorker(worker);
 		order.setStatus(OrderStatus.PENDING);
 		orderRepository.save(order);
-		return ResponseEntity.status(HttpStatus.CREATED).body(toDto(order));
+		return ApiResponseBuilder.created("Order created", toDto(order));
 	}
 
-	/**
-	 * POST /admin/send-order/nearest?lat={lat}&lon={lon}&radiusKm={km}
-	 *
-	 * Finds the nearest available worker within radiusKm (default 50 km) of the
-	 * given coordinates and creates a PENDING order for them.
-	 */
 	@PostMapping("/admin/send-order/nearest")
 	public ResponseEntity<?> sendOrderToNearest(HttpServletRequest req,
 			@RequestParam double lat,
 			@RequestParam double lon,
 			@RequestParam(defaultValue = "50") double radiusKm) {
-		if (!isAdmin(req)) return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+		if (!isAdmin(req)) return ApiResponseBuilder.fail(HttpStatus.FORBIDDEN, "Forbidden");
 
 		User nearest = locationService
 				.findNearestWorkerWithinRadius(lat, lon, radiusKm)
 				.orElse(null);
 
 		if (nearest == null) {
-			return ResponseEntity.status(HttpStatus.NOT_FOUND)
-					.body(Map.of("error", "No available worker found within " + radiusKm + " km"));
+			return ApiResponseBuilder.fail(HttpStatus.NOT_FOUND,
+					"No available worker found within " + radiusKm + " km");
 		}
 
 		Order order = new Order();
@@ -97,28 +90,26 @@ public class OrderController {
 		order.setStatus(OrderStatus.PENDING);
 		orderRepository.save(order);
 
-		Map<String, Object> result = new java.util.LinkedHashMap<>();
-		result.put("order",          toDto(order));
-		result.put("workerName",     nearest.getName());
-		result.put("workerCity",     nearest.getLocation());
-		result.put("workerLat",      nearest.getLatitude());
-		result.put("workerLon",      nearest.getLongitude());
+		Map<String, Object> result = new LinkedHashMap<>();
+		result.put("order", toDto(order));
+		result.put("workerName", nearest.getName());
+		result.put("workerCity", nearest.getLocation());
+		result.put("workerLat", nearest.getLatitude());
+		result.put("workerLon", nearest.getLongitude());
 		result.put("distanceKm",
 				Math.round(LocationService.distanceKm(lat, lon, nearest.getLatitude(), nearest.getLongitude()) * 10.0) / 10.0);
-		return ResponseEntity.status(HttpStatus.CREATED).body(result);
+		return ApiResponseBuilder.created("Order assigned to nearest worker", result);
 	}
-
-	/* ── WORKER ── */
 
 	@GetMapping("/worker/orders")
 	public ResponseEntity<?> myOrders(HttpServletRequest req) {
 		Long uid = currentUserId(req);
-		if (uid == null) return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+		if (uid == null) return ApiResponseBuilder.fail(HttpStatus.UNAUTHORIZED, "Unauthorized");
 		User worker = userRepository.findById(uid).orElse(null);
-		if (worker == null) return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+		if (worker == null) return ApiResponseBuilder.fail(HttpStatus.UNAUTHORIZED, "Unauthorized");
 		List<OrderResponse> list = orderRepository.findByWorkerOrderByCreatedAtDesc(worker)
 				.stream().map(this::toDto).collect(Collectors.toList());
-		return ResponseEntity.ok(list);
+		return ApiResponseBuilder.ok("Orders loaded", list);
 	}
 
 	@PostMapping("/worker/orders/{id}/accept")
@@ -139,31 +130,31 @@ public class OrderController {
 	@PostMapping("/worker/orders/{id}/cancel")
 	public ResponseEntity<?> cancel(HttpServletRequest req, @PathVariable Long id) {
 		Long uid = currentUserId(req);
-		if (uid == null) return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+		if (uid == null) return ApiResponseBuilder.fail(HttpStatus.UNAUTHORIZED, "Unauthorized");
 		Order order = orderRepository.findById(id).orElse(null);
-		if (order == null) return ResponseEntity.notFound().build();
+		if (order == null) return ApiResponseBuilder.fail(HttpStatus.NOT_FOUND, "Order not found");
 		if (!order.getWorker().getId().equals(uid))
-			return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+			return ApiResponseBuilder.fail(HttpStatus.FORBIDDEN, "Forbidden");
 		if (order.getStatus() == OrderStatus.DELIVERED)
-			return ResponseEntity.badRequest().body("{\"error\":\"Cannot cancel a delivered order\"}");
+			return ApiResponseBuilder.fail(HttpStatus.BAD_REQUEST, "Cannot cancel a delivered order");
 		order.setStatus(OrderStatus.CANCELLED);
 		orderRepository.save(order);
-		return ResponseEntity.ok(toDto(order));
+		return ApiResponseBuilder.ok("Order cancelled", toDto(order));
 	}
 
 	private ResponseEntity<?> transition(HttpServletRequest req, Long orderId,
 			OrderStatus from, OrderStatus to) {
 		Long uid = currentUserId(req);
-		if (uid == null) return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+		if (uid == null) return ApiResponseBuilder.fail(HttpStatus.UNAUTHORIZED, "Unauthorized");
 		Order order = orderRepository.findById(orderId).orElse(null);
-		if (order == null) return ResponseEntity.notFound().build();
+		if (order == null) return ApiResponseBuilder.fail(HttpStatus.NOT_FOUND, "Order not found");
 		if (!order.getWorker().getId().equals(uid))
-			return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+			return ApiResponseBuilder.fail(HttpStatus.FORBIDDEN, "Forbidden");
 		if (order.getStatus() != from)
-			return ResponseEntity.badRequest()
-					.body("{\"error\":\"Order must be in status " + from + " to perform this action\"}");
+			return ApiResponseBuilder.fail(HttpStatus.BAD_REQUEST,
+					"Order must be in status " + from + " to perform this action");
 		order.setStatus(to);
 		orderRepository.save(order);
-		return ResponseEntity.ok(toDto(order));
+		return ApiResponseBuilder.ok("Order updated", toDto(order));
 	}
 }

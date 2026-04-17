@@ -2,6 +2,7 @@ package com.guidewire.in.service;
 
 import com.cloudinary.Cloudinary;
 import com.cloudinary.utils.ObjectUtils;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -12,6 +13,9 @@ import java.util.Map;
 public class CloudinaryService {
 
 	private final Cloudinary cloudinary;
+
+	@Value("${app.demo.mode:false}")
+	private boolean demoMode;
 
 	public CloudinaryService(Cloudinary cloudinary) {
 		this.cloudinary = cloudinary;
@@ -24,6 +28,9 @@ public class CloudinaryService {
 		String contentType = file.getContentType();
 		if (contentType == null || !contentType.startsWith("image/")) {
 			throw new IllegalArgumentException("Only image files are allowed");
+		}
+		if (demoMode) {
+			return "https://demo.safeflex.local/" + folder.replace('/', '-') + "-" + System.currentTimeMillis() + ".jpg";
 		}
 		@SuppressWarnings("unchecked")
 		Map<String, Object> params = ObjectUtils.asMap(

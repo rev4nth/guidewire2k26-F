@@ -5,19 +5,16 @@ import com.guidewire.in.dto.DisruptionResponse;
 import com.guidewire.in.entity.Claim;
 import com.guidewire.in.entity.Disruption;
 import com.guidewire.in.entity.DisruptionSeverity;
+import com.guidewire.in.entity.DisruptionSource;
 import com.guidewire.in.entity.DisruptionType;
-import com.guidewire.in.entity.Order;
-import com.guidewire.in.entity.OrderStatus;
-import com.guidewire.in.entity.Policy;
 import com.guidewire.in.entity.User;
-import com.guidewire.in.repository.ClaimRepository;
 import com.guidewire.in.repository.DisruptionRepository;
-import com.guidewire.in.repository.OrderRepository;
-import com.guidewire.in.repository.PolicyRepository;
 import com.guidewire.in.repository.UserRepository;
 import com.guidewire.in.security.JwtFilter;
-import com.guidewire.in.service.FinanceService;
+import com.guidewire.in.service.DisruptionService;
+import com.guidewire.in.service.DisruptionService.SingleDisruptionResult;
 import com.guidewire.in.service.LocationService;
+import com.guidewire.in.web.ApiResponseBuilder;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -30,11 +27,9 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.math.BigDecimal;
-import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.stream.Collectors;
 
 @RestController
@@ -42,42 +37,45 @@ import java.util.stream.Collectors;
 public class DisruptionController {
 
 	private final DisruptionRepository disruptionRepository;
-	private final OrderRepository orderRepository;
-	private final ClaimRepository claimRepository;
-	private final PolicyRepository policyRepository;
 	private final UserRepository userRepository;
 	private final LocationService locationService;
-	private final FinanceService financeService;
+	private final DisruptionService disruptionService;
 
 	public DisruptionController(DisruptionRepository disruptionRepository,
-			OrderRepository orderRepository,
-			ClaimRepository claimRepository,
-			PolicyRepository policyRepository,
 			UserRepository userRepository,
 			LocationService locationService,
-			FinanceService financeService) {
+			DisruptionService disruptionService) {
 		this.disruptionRepository = disruptionRepository;
-		this.orderRepository      = orderRepository;
-		this.claimRepository      = claimRepository;
-		this.policyRepository     = policyRepository;
-		this.userRepository       = userRepository;
-		this.locationService      = locationService;
-		this.financeService       = financeService;
+		this.userRepository = userRepository;
+		this.locationService = locationService;
+		this.disruptionService = disruptionService;
 	}
 
 	private boolean isAdmin(HttpServletRequest req) {
 		return "ADMIN".equals(req.getAttribute(JwtFilter.ATTR_ROLE));
 	}
 
-	@Transactional
-	@PostMapping("/disruption/{workerId}")
-	public ResponseEntity<?> triggerDisruption(HttpServletRequest req,
-			@PathVariable Long workerId,
-			@RequestBody DisruptionRequest body) {
-		if (!isAdmin(req)) return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+	private static DisruptionResponse toDto(Disruption d) {
+		String src = d.getSource() != null ? d.getSource().name() : DisruptionSource.MANUAL.name();
+		return new DisruptionResponse(
+				d.getId(),
+				d.getType().name(),
+				d.getSeverity().name(),
+				d.getLocation(),
+				src,
+				d.getWorker().getId(),
+				d.getWorker().getName(),
+				d.getCreatedAt());
+	}
 
-		User worker = userRepository.findById(workerId).orElse(null);
-		if (worker == null) return ResponseEntity.notFound().build();
+	@Transactional
+	@PostMapping("/disruption")
+	public ResponseEntity<?> createManualDisruption(HttpServletRequest req, @RequestBody DisruptionRequest body) {
+		if (!isAdmin(req)) return ApiResponseBuilder.fail(HttpStatus.FORBIDDEN, "Forbidden");
+
+		if (body.getLocation() == null || body.getLocation().isBlank()) {
+			return ApiResponseBuilder.fail(HttpStatus.BAD_REQUEST, "location is required");
+		}
 
 		DisruptionType type;
 		DisruptionSeverity severity;
@@ -85,65 +83,69 @@ public class DisruptionController {
 			type = DisruptionType.valueOf(body.getType().toUpperCase());
 			severity = DisruptionSeverity.valueOf(body.getSeverity().toUpperCase());
 		} catch (Exception e) {
-			return ResponseEntity.badRequest().body("{\"error\":\"Invalid type or severity\"}");
+			return ApiResponseBuilder.fail(HttpStatus.BAD_REQUEST, "Invalid type or severity");
 		}
 
-		Disruption disruption = new Disruption();
-		disruption.setType(type);
-		disruption.setSeverity(severity);
-		disruption.setWorker(worker);
-		disruptionRepository.save(disruption);
-
-		// Cancel active order if present
-		List<OrderStatus> activeStatuses = List.of(OrderStatus.PENDING, OrderStatus.ACCEPTED, OrderStatus.PICKED_UP);
-		Optional<Order> activeOrder = orderRepository.findFirstByWorkerAndStatusIn(worker, activeStatuses);
-		Claim claim = null;
-
-		if (activeOrder.isPresent()) {
-			Order order = activeOrder.get();
-			order.setStatus(OrderStatus.CANCELLED);
-			orderRepository.save(order);
-
-			// Find first active policy for coverage amount
-			Optional<Policy> policy = policyRepository.findAll().stream()
-					.filter(Policy::isActive)
-					.findFirst();
-
-			BigDecimal coverage = policy.map(Policy::getCoverage).orElse(BigDecimal.valueOf(100));
-
-			claim = new Claim();
-			claim.setWorker(worker);
-			claim.setAmount(coverage);
-			claim.setReason("Disruption (" + type + " " + severity + ")");
-			claimRepository.save(claim);
-			financeService.creditWalletForClaim(worker, coverage, "claim:" + claim.getId());
+		String loc = body.getLocation().trim();
+		List<User> workers = locationService.findWorkersByCity(loc);
+		if (workers.isEmpty()) {
+			Map<String, Object> empty = new LinkedHashMap<>();
+			empty.put("message", "No workers found in the specified area");
+			empty.put("affectedCount", 0);
+			empty.put("workers", List.of());
+			return ApiResponseBuilder.ok("No workers in area", empty);
 		}
 
-		DisruptionResponse dr = new DisruptionResponse(
-				disruption.getId(), disruption.getType().name(), disruption.getSeverity().name(),
-				worker.getId(), worker.getName(), disruption.getCreatedAt());
+		List<Map<String, Object>> results = disruptionService.triggerForWorkers(workers, type, severity, loc,
+				DisruptionSource.MANUAL);
 
-		Map<String, Object> result = new java.util.LinkedHashMap<>();
-		result.put("disruption", dr);
-		result.put("orderCancelled", activeOrder.isPresent());
-		if (claim != null) {
-			result.put("claimCreated", true);
-			result.put("claimAmount", claim.getAmount());
-		} else {
-			result.put("claimCreated", false);
-		}
-		return ResponseEntity.ok(result);
+		Map<String, Object> response = new LinkedHashMap<>();
+		response.put("type", type.name());
+		response.put("severity", severity.name());
+		response.put("source", DisruptionSource.MANUAL.name());
+		response.put("affectedCount", workers.size());
+		response.put("workers", results);
+		return ApiResponseBuilder.ok("Disruption triggered", response);
 	}
 
-	/**
-	 * POST /admin/disruption/location?city={city}
-	 *
-	 * Triggers a disruption for ALL workers in the given city.
-	 * For each worker that has an active order, cancels it and creates a claim.
-	 *
-	 * Alternatively supply lat/lon + radiusKm to target by GPS radius:
-	 *   POST /admin/disruption/location?lat=17.38&lon=78.48&radiusKm=30
-	 */
+	@Transactional
+	@PostMapping("/disruption/{workerId}")
+	public ResponseEntity<?> triggerDisruption(HttpServletRequest req,
+			@PathVariable Long workerId,
+			@RequestBody DisruptionRequest body) {
+		if (!isAdmin(req)) return ApiResponseBuilder.fail(HttpStatus.FORBIDDEN, "Forbidden");
+
+		User worker = userRepository.findById(workerId).orElse(null);
+		if (worker == null) return ApiResponseBuilder.fail(HttpStatus.NOT_FOUND, "Worker not found");
+
+		DisruptionType type;
+		DisruptionSeverity severity;
+		try {
+			type = DisruptionType.valueOf(body.getType().toUpperCase());
+			severity = DisruptionSeverity.valueOf(body.getSeverity().toUpperCase());
+		} catch (Exception e) {
+			return ApiResponseBuilder.fail(HttpStatus.BAD_REQUEST, "Invalid type or severity");
+		}
+
+		String location = worker.getLocation() != null ? worker.getLocation() : "";
+		SingleDisruptionResult result = disruptionService.triggerForWorker(worker, type, severity, location,
+				DisruptionSource.MANUAL);
+
+		Claim claim = result.claim();
+		DisruptionResponse dr = toDto(result.disruption());
+
+		Map<String, Object> res = new LinkedHashMap<>();
+		res.put("disruption", dr);
+		res.put("orderCancelled", result.orderCancelled());
+		if (claim != null) {
+			res.put("claimCreated", true);
+			res.put("claimAmount", claim.getAmount());
+		} else {
+			res.put("claimCreated", false);
+		}
+		return ApiResponseBuilder.ok("Disruption processed", res);
+	}
+
 	@Transactional
 	@PostMapping("/disruption/location")
 	public ResponseEntity<?> triggerLocationDisruption(HttpServletRequest req,
@@ -153,91 +155,55 @@ public class DisruptionController {
 			@RequestParam(required = false) Double lon,
 			@RequestParam(defaultValue = "30") double radiusKm) {
 
-		if (!isAdmin(req)) return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+		if (!isAdmin(req)) return ApiResponseBuilder.fail(HttpStatus.FORBIDDEN, "Forbidden");
 
 		DisruptionType type;
 		DisruptionSeverity severity;
 		try {
-			type     = DisruptionType.valueOf(body.getType().toUpperCase());
+			type = DisruptionType.valueOf(body.getType().toUpperCase());
 			severity = DisruptionSeverity.valueOf(body.getSeverity().toUpperCase());
 		} catch (Exception e) {
-			return ResponseEntity.badRequest().body("{\"error\":\"Invalid type or severity\"}");
+			return ApiResponseBuilder.fail(HttpStatus.BAD_REQUEST, "Invalid type or severity");
 		}
 
-		// Resolve affected workers
 		List<User> affectedWorkers;
+		String locationLabel;
 		if (lat != null && lon != null) {
 			affectedWorkers = locationService.findWorkersNearby(lat, lon, radiusKm);
+			locationLabel = String.format("radius:%.4f,%.4f r=%.0fkm", lat, lon, radiusKm);
 		} else if (city != null && !city.isBlank()) {
-			affectedWorkers = locationService.findWorkersByCity(city.trim());
+			locationLabel = city.trim();
+			affectedWorkers = locationService.findWorkersByCity(locationLabel);
 		} else {
-			return ResponseEntity.badRequest().body("{\"error\":\"Provide either city or lat+lon\"}");
+			return ApiResponseBuilder.fail(HttpStatus.BAD_REQUEST, "Provide either city or lat+lon");
 		}
 
 		if (affectedWorkers.isEmpty()) {
-			return ResponseEntity.ok(Map.of("message", "No workers found in the specified area",
-					"affectedCount", 0));
+			Map<String, Object> empty = new LinkedHashMap<>();
+			empty.put("message", "No workers found in the specified area");
+			empty.put("affectedCount", 0);
+			return ApiResponseBuilder.ok("No workers in area", empty);
 		}
 
-		BigDecimal coverage = policyRepository.findAll().stream()
-				.filter(Policy::isActive)
-				.findFirst()
-				.map(Policy::getCoverage)
-				.orElse(BigDecimal.valueOf(100));
+		List<Map<String, Object>> results = disruptionService.triggerForWorkers(affectedWorkers, type, severity,
+				locationLabel, DisruptionSource.MANUAL);
 
-		List<OrderStatus> activeStatuses = List.of(OrderStatus.PENDING, OrderStatus.ACCEPTED, OrderStatus.PICKED_UP);
-		List<Map<String, Object>> results = new ArrayList<>();
-
-		for (User worker : affectedWorkers) {
-			Disruption disruption = new Disruption();
-			disruption.setType(type);
-			disruption.setSeverity(severity);
-			disruption.setWorker(worker);
-			disruptionRepository.save(disruption);
-
-			Optional<Order> activeOrder = orderRepository.findFirstByWorkerAndStatusIn(worker, activeStatuses);
-			boolean orderCancelled = false;
-			boolean claimCreated   = false;
-
-			if (activeOrder.isPresent()) {
-				activeOrder.get().setStatus(OrderStatus.CANCELLED);
-				orderRepository.save(activeOrder.get());
-				orderCancelled = true;
-
-				Claim claim = new Claim();
-				claim.setWorker(worker);
-				claim.setAmount(coverage);
-				claim.setReason("Location disruption (" + type + " " + severity + ")");
-				claimRepository.save(claim);
-				financeService.creditWalletForClaim(worker, coverage, "claim:" + claim.getId());
-				claimCreated = true;
-			}
-
-			Map<String, Object> entry = new java.util.LinkedHashMap<>();
-			entry.put("workerId",      worker.getId());
-			entry.put("workerName",    worker.getName());
-			entry.put("city",          worker.getLocation());
-			entry.put("orderCancelled", orderCancelled);
-			entry.put("claimCreated",   claimCreated);
-			results.add(entry);
-		}
-
-		Map<String, Object> response = new java.util.LinkedHashMap<>();
-		response.put("type",          type.name());
-		response.put("severity",      severity.name());
+		Map<String, Object> response = new LinkedHashMap<>();
+		response.put("type", type.name());
+		response.put("severity", severity.name());
+		response.put("source", DisruptionSource.MANUAL.name());
 		response.put("affectedCount", affectedWorkers.size());
-		response.put("workers",       results);
-		return ResponseEntity.ok(response);
+		response.put("workers", results);
+		return ApiResponseBuilder.ok("Disruption triggered", response);
 	}
 
 	@GetMapping("/disruptions")
 	public ResponseEntity<?> listAll(HttpServletRequest req) {
-		if (!isAdmin(req)) return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+		if (!isAdmin(req)) return ApiResponseBuilder.fail(HttpStatus.FORBIDDEN, "Forbidden");
 		List<DisruptionResponse> list = disruptionRepository.findAll().stream()
 				.sorted((a, b) -> b.getCreatedAt().compareTo(a.getCreatedAt()))
-				.map(d -> new DisruptionResponse(d.getId(), d.getType().name(), d.getSeverity().name(),
-						d.getWorker().getId(), d.getWorker().getName(), d.getCreatedAt()))
+				.map(DisruptionController::toDto)
 				.collect(Collectors.toList());
-		return ResponseEntity.ok(list);
+		return ApiResponseBuilder.ok("Disruptions loaded", list);
 	}
 }

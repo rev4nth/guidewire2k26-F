@@ -4,7 +4,7 @@ import lombok.Data;
 
 @Data
 public class BuyPolicyRequest {
-	/** WALLET — deduct from wallet. RAZORPAY — external payment (dummy / test success from client). */
+	/** WALLET | SIMULATE | RAZORPAY — demo mode treats all as simulated success (no real gateway). */
 	private String source;
 	private String razorpayPaymentId;
 }

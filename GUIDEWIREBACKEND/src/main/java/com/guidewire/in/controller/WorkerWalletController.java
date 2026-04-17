@@ -9,7 +9,9 @@ import com.guidewire.in.repository.PolicyRepository;
 import com.guidewire.in.repository.UserRepository;
 import com.guidewire.in.security.JwtFilter;
 import com.guidewire.in.service.FinanceService;
+import com.guidewire.in.web.ApiResponseBuilder;
 import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.transaction.annotation.Transactional;
@@ -32,6 +34,9 @@ public class WorkerWalletController {
 	private final UserRepository userRepository;
 	private final PolicyRepository policyRepository;
 	private final FinanceService financeService;
+
+	@Value("${app.demo.mode:true}")
+	private boolean demoMode;
 
 	public WorkerWalletController(UserRepository userRepository,
 			PolicyRepository policyRepository,
@@ -61,80 +66,100 @@ public class WorkerWalletController {
 	@GetMapping("/wallet")
 	public ResponseEntity<?> wallet(HttpServletRequest req) {
 		User w = requireWorker(req);
-		if (w == null) return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+		if (w == null) return ApiResponseBuilder.fail(HttpStatus.FORBIDDEN, "Forbidden");
 		w = userRepository.findById(w.getId()).orElseThrow();
 		Map<String, Object> body = new LinkedHashMap<>();
 		body.put("walletBalance", w.getWalletBalance() != null ? w.getWalletBalance() : 0.0);
 		body.put("activePolicyId", w.getActivePolicyId());
-		return ResponseEntity.ok(body);
+		return ApiResponseBuilder.ok("Wallet loaded", body);
 	}
 
 	@Transactional
 	@PostMapping("/add-money")
 	public ResponseEntity<?> addMoney(HttpServletRequest req, @RequestBody WalletAmountRequest body) {
 		User w = requireWorker(req);
-		if (w == null) return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+		if (w == null) return ApiResponseBuilder.fail(HttpStatus.FORBIDDEN, "Forbidden");
 		if (body.getAmount() == null || body.getAmount().compareTo(BigDecimal.ZERO) <= 0) {
-			return ResponseEntity.badRequest().body(Map.of("error", "Positive amount required"));
+			return ApiResponseBuilder.fail(HttpStatus.BAD_REQUEST, "Positive amount required");
 		}
 		w = userRepository.findById(w.getId()).orElseThrow();
 		double bal = w.getWalletBalance() != null ? w.getWalletBalance() : 0.0;
 		w.setWalletBalance(round2(bal + body.getAmount().doubleValue()));
 		userRepository.save(w);
-		return ResponseEntity.ok(Map.of("walletBalance", w.getWalletBalance()));
+		return ApiResponseBuilder.ok("Balance updated", Map.of("walletBalance", w.getWalletBalance()));
 	}
 
 	@Transactional
 	@PostMapping("/withdraw")
 	public ResponseEntity<?> withdraw(HttpServletRequest req, @RequestBody WalletAmountRequest body) {
 		User w = requireWorker(req);
-		if (w == null) return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+		if (w == null) return ApiResponseBuilder.fail(HttpStatus.FORBIDDEN, "Forbidden");
 		if (body.getAmount() == null || body.getAmount().compareTo(BigDecimal.ZERO) <= 0) {
-			return ResponseEntity.badRequest().body(Map.of("error", "Positive amount required"));
+			return ApiResponseBuilder.fail(HttpStatus.BAD_REQUEST, "Positive amount required");
 		}
 		w = userRepository.findById(w.getId()).orElseThrow();
 		double bal = w.getWalletBalance() != null ? w.getWalletBalance() : 0.0;
 		if (bal < body.getAmount().doubleValue()) {
-			return ResponseEntity.badRequest().body(Map.of("error", "Insufficient wallet balance"));
+			return ApiResponseBuilder.fail(HttpStatus.BAD_REQUEST, "Insufficient wallet balance");
 		}
 		w.setWalletBalance(round2(bal - body.getAmount().doubleValue()));
 		userRepository.save(w);
-		return ResponseEntity.ok(Map.of("walletBalance", w.getWalletBalance()));
+		return ApiResponseBuilder.ok("Balance updated", Map.of("walletBalance", w.getWalletBalance()));
 	}
 
 	/**
 	 * POST /worker/buy-policy/{policyId}
-	 * Body: { "source": "WALLET" | "RAZORPAY", "razorpayPaymentId": "..." }
+	 * Body: { "source": "WALLET" | "SIMULATE" | "RAZORPAY", "razorpayPaymentId": "..." }
+	 * Demo mode: always activates policy and returns success (SIMULATE/RAZORPAY skip wallet; WALLET deducts when possible).
 	 */
 	@Transactional
 	@PostMapping("/buy-policy/{policyId}")
 	public ResponseEntity<?> buyPolicy(HttpServletRequest req, @PathVariable Long policyId,
 			@RequestBody(required = false) BuyPolicyRequest body) {
 		User w = requireWorker(req);
-		if (w == null) return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+		if (w == null) return ApiResponseBuilder.fail(HttpStatus.FORBIDDEN, "Forbidden");
 
 		Policy policy = policyRepository.findById(policyId).orElse(null);
 		if (policy == null || !policy.isActive()) {
-			return ResponseEntity.badRequest().body(Map.of("error", "Policy not found or inactive"));
+			return ApiResponseBuilder.fail(HttpStatus.BAD_REQUEST, "Policy not found or inactive");
 		}
 
 		String source = body != null && body.getSource() != null
 				? body.getSource().trim().toUpperCase()
-				: "RAZORPAY";
+				: "SIMULATE";
 		BigDecimal premium = policy.getPremium();
 
 		w = userRepository.findById(w.getId()).orElseThrow();
 
+		if (demoMode) {
+			if ("WALLET".equals(source)) {
+				double bal = w.getWalletBalance() != null ? w.getWalletBalance() : 0.0;
+				if (bal >= premium.doubleValue()) {
+					w.setWalletBalance(round2(bal - premium.doubleValue()));
+				}
+			}
+			w.setActivePolicyId(policy.getId());
+			userRepository.save(w);
+			String ref = body != null && body.getRazorpayPaymentId() != null && !body.getRazorpayPaymentId().isBlank()
+					? body.getRazorpayPaymentId()
+					: "demo-" + System.currentTimeMillis();
+			financeService.recordPolicyPurchase(w, premium, source, ref);
+			Map<String, Object> res = new LinkedHashMap<>();
+			res.put("activePolicyId", policy.getId());
+			res.put("walletBalance", w.getWalletBalance());
+			return ApiResponseBuilder.ok("Policy activated", res);
+		}
+
 		if ("WALLET".equals(source)) {
 			double bal = w.getWalletBalance() != null ? w.getWalletBalance() : 0.0;
 			if (bal < premium.doubleValue()) {
-				return ResponseEntity.badRequest().body(Map.of("error", "Insufficient wallet balance"));
+				return ApiResponseBuilder.fail(HttpStatus.BAD_REQUEST, "Insufficient wallet balance");
 			}
 			w.setWalletBalance(round2(bal - premium.doubleValue()));
-		} else if ("RAZORPAY".equals(source)) {
-			// Dummy: trust client after Razorpay checkout success
+		} else if ("RAZORPAY".equals(source) || "SIMULATE".equals(source)) {
+			// Simulated external payment
 		} else {
-			return ResponseEntity.badRequest().body(Map.of("error", "source must be WALLET or RAZORPAY"));
+			return ApiResponseBuilder.fail(HttpStatus.BAD_REQUEST, "source must be WALLET, SIMULATE, or RAZORPAY");
 		}
 
 		w.setActivePolicyId(policy.getId());
@@ -144,9 +169,8 @@ public class WorkerWalletController {
 				body != null ? body.getRazorpayPaymentId() : null);
 
 		Map<String, Object> res = new LinkedHashMap<>();
-		res.put("message", "Policy purchased");
 		res.put("activePolicyId", policy.getId());
 		res.put("walletBalance", w.getWalletBalance());
-		return ResponseEntity.ok(res);
+		return ApiResponseBuilder.ok("Policy purchased", res);
 	}
 }

@@ -16,6 +16,8 @@ public class DefaultAdminInitializer implements CommandLineRunner {
 
 	private static final String ADMIN_EMAIL = "admin@safeflex.com";
 	private static final String ADMIN_PASSWORD = "admin123";
+	private static final String GOVT_EMAIL = "govt@safeflex.com";
+	private static final String GOVT_PASSWORD = "govt123";
 
 	private final UserRepository userRepository;
 	private final PasswordEncoder passwordEncoder;
@@ -38,6 +40,15 @@ public class DefaultAdminInitializer implements CommandLineRunner {
 			admin.setRole(Role.ADMIN);
 			admin.setLocation("HQ");
 			userRepository.save(admin);
+		}
+		if (userRepository.findByEmail(GOVT_EMAIL).isEmpty()) {
+			User govt = new User();
+			govt.setName("Government");
+			govt.setEmail(GOVT_EMAIL);
+			govt.setPassword(passwordEncoder.encode(GOVT_PASSWORD));
+			govt.setRole(Role.GOVT);
+			govt.setLocation("India");
+			userRepository.save(govt);
 		}
 		seedPolicy("BASIC",   BigDecimal.valueOf(99),  BigDecimal.valueOf(500));
 		seedPolicy("PRO",     BigDecimal.valueOf(199), BigDecimal.valueOf(1500));

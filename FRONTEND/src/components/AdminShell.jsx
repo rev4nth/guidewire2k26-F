@@ -77,6 +77,7 @@ export default function AdminShell({ activeTab, onTabChange, children }) {
 	const { user, logout } = useAuth()
 	const navigate = useNavigate()
 	const [sidebarOpen, setSidebarOpen] = useState(true)
+	const [mobileNavOpen, setMobileNavOpen] = useState(false)
 
 	function handleLogout() {
 		logout()
@@ -85,12 +86,20 @@ export default function AdminShell({ activeTab, onTabChange, children }) {
 
 	return (
 		<div className="flex h-screen overflow-hidden bg-gray-100">
+			{mobileNavOpen && (
+				<button
+					type="button"
+					className="fixed inset-0 z-40 bg-black/50 md:hidden"
+					aria-label="Close menu"
+					onClick={() => setMobileNavOpen(false)}
+				/>
+			)}
 
 			{/* ══════════════ SIDEBAR ══════════════ */}
 			<aside
-				className={`flex flex-col bg-gray-900 transition-all duration-300 ease-in-out ${
+				className={`fixed inset-y-0 left-0 z-50 flex flex-col bg-gray-900 transition-all duration-300 ease-in-out md:static md:z-auto ${
 					sidebarOpen ? 'w-60' : 'w-16'
-				} flex-shrink-0`}
+				} ${mobileNavOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}`}
 			>
 				{/* logo row */}
 				<div className="flex h-16 items-center justify-between border-b border-gray-800 px-4">
@@ -122,7 +131,10 @@ export default function AdminShell({ activeTab, onTabChange, children }) {
 							<button
 								key={id}
 								type="button"
-								onClick={() => onTabChange(id)}
+								onClick={() => {
+									onTabChange(id)
+									setMobileNavOpen(false)
+								}}
 								className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all duration-150 ${
 									active
 										? 'bg-gray-700 text-white shadow-sm'
@@ -175,15 +187,27 @@ export default function AdminShell({ activeTab, onTabChange, children }) {
 			</aside>
 
 			{/* ══════════════ MAIN AREA ══════════════ */}
-			<div className="flex flex-1 flex-col overflow-hidden">
+			<div className="flex min-w-0 flex-1 flex-col overflow-hidden">
 
 				{/* top bar */}
-				<header className="flex h-16 flex-shrink-0 items-center justify-between border-b border-gray-200 bg-white px-6 shadow-sm">
-					<div>
-						<h1 className="text-lg font-bold capitalize text-gray-800">
-							{NAV.find((n) => n.id === activeTab)?.label ?? 'Dashboard'}
-						</h1>
-						<p className="text-xs text-gray-400">SafeFlex Admin Control Panel</p>
+				<header className="flex h-16 flex-shrink-0 items-center justify-between border-b border-gray-200 bg-white px-4 shadow-sm sm:px-6">
+					<div className="flex min-w-0 items-center gap-3">
+						<button
+							type="button"
+							className="rounded-md p-2 text-gray-600 hover:bg-gray-100 md:hidden"
+							aria-label="Open menu"
+							onClick={() => setMobileNavOpen(true)}
+						>
+							<svg className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+								<path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
+							</svg>
+						</button>
+						<div className="min-w-0">
+							<h1 className="truncate text-lg font-bold capitalize text-gray-800">
+								{NAV.find((n) => n.id === activeTab)?.label ?? 'Dashboard'}
+							</h1>
+							<p className="text-xs text-gray-400">SafeFlex Admin Control Panel</p>
+						</div>
 					</div>
 					<div className="flex items-center gap-3">
 						<span className="rounded-full bg-blue-100 px-3 py-1 text-xs font-semibold text-blue-700">
@@ -201,7 +225,7 @@ export default function AdminShell({ activeTab, onTabChange, children }) {
 				</header>
 
 				{/* scrollable content */}
-				<main className="flex-1 overflow-y-auto bg-gray-100 p-6">
+				<main className="flex-1 overflow-y-auto bg-gray-100 p-4 sm:p-6">
 					{children}
 				</main>
 			</div>

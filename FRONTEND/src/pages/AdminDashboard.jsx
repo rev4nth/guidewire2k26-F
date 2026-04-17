@@ -6,6 +6,7 @@ import AdminShell from '../components/AdminShell'
 /* ─────────── helpers ─────────── */
 function parseApiError(data) {
 	if (data == null) return 'Something went wrong.'
+	if (typeof data === 'object' && data.status === 'FAILED' && data.error) return String(data.error)
 	if (typeof data === 'object' && data.error) return String(data.error)
 	if (typeof data === 'string') {
 		try { return JSON.parse(data).error ?? data } catch { return data }
@@ -579,8 +580,19 @@ function TabDisruptions({ users, disruptions, loadDisruptions, onSendOrder, onTr
 		finally { setBusyAction(false) }
 	}
 
-	const SEV_BADGE = { HIGH: 'bg-red-100 text-red-700', LOW: 'bg-yellow-100 text-yellow-700' }
-	const TYPE_BADGE = { RAIN: 'bg-blue-100 text-blue-700', TRAFFIC: 'bg-orange-100 text-orange-700', BANDH: 'bg-purple-100 text-purple-700' }
+	const SEV_BADGE = {
+		HIGH: 'bg-red-100 text-red-700',
+		MEDIUM: 'bg-amber-100 text-amber-800',
+		LOW: 'bg-yellow-100 text-yellow-700',
+	}
+	const TYPE_BADGE = {
+		RAIN: 'bg-blue-100 text-blue-700',
+		TRAFFIC: 'bg-orange-100 text-orange-700',
+		BANDH: 'bg-purple-100 text-purple-700',
+		FLOOD: 'bg-cyan-100 text-cyan-800',
+	}
+	const SOURCE_BADGE = { AUTO: 'bg-blue-100 text-blue-800', MANUAL: 'bg-amber-100 text-amber-900', GOVT: 'bg-emerald-100 text-emerald-900' }
+	const CLAIM_STATUS_MINI = { APPROVED: 'bg-emerald-200 text-emerald-900', REVIEW: 'bg-amber-200 text-amber-950', REJECTED: 'bg-red-200 text-red-900' }
 	const ORDER_STATUS_BADGE = {
 		PENDING: 'bg-orange-100 text-orange-700', ACCEPTED: 'bg-blue-100 text-blue-700',
 		PICKED_UP: 'bg-purple-100 text-purple-700', DELIVERED: 'bg-emerald-100 text-emerald-700',
@@ -670,11 +682,16 @@ function TabDisruptions({ users, disruptions, loadDisruptions, onSendOrder, onTr
 									<div className="flex items-center gap-2">
 										<select value={disruptType} onChange={(e) => setDisruptType(e.target.value)}
 											className="rounded-md border border-gray-300 px-2 py-2 text-sm">
-											<option>RAIN</option><option>TRAFFIC</option><option>BANDH</option>
+											<option>RAIN</option>
+											<option>TRAFFIC</option>
+											<option>BANDH</option>
+											<option>FLOOD</option>
 										</select>
 										<select value={disruptSev} onChange={(e) => setDisruptSev(e.target.value)}
 											className="rounded-md border border-gray-300 px-2 py-2 text-sm">
-											<option>HIGH</option><option>LOW</option>
+											<option>HIGH</option>
+											<option>MEDIUM</option>
+											<option>LOW</option>
 										</select>
 										<button
 											type="button"
@@ -711,9 +728,15 @@ function TabDisruptions({ users, disruptions, loadDisruptions, onSendOrder, onTr
 									<p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Claims ({workerDetail?.claims?.length ?? 0})</p>
 									<div className="space-y-1 max-h-40 overflow-y-auto">
 										{(workerDetail?.claims ?? []).slice(0, 10).map((c) => (
-											<div key={c.id} className="flex items-center justify-between rounded-md bg-emerald-50 px-3 py-1.5">
-												<span className="text-xs text-gray-600">{c.reason}</span>
-												<span className="text-xs font-semibold text-emerald-700">₹{Number(c.amount).toLocaleString()}</span>
+											<div key={c.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-emerald-50 px-3 py-1.5">
+												<span className="text-xs text-gray-600 min-w-0 flex-1 truncate">{c.reason}</span>
+												<div className="flex items-center gap-2 shrink-0">
+													{c.status && (
+														<span className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold ${CLAIM_STATUS_MINI[c.status] ?? 'bg-gray-200 text-gray-700'}`}>{c.status}</span>
+													)}
+													<span className="text-[10px] text-gray-500">{c.confidenceScore ?? 0} pts</span>
+													<span className="text-xs font-semibold text-emerald-700">₹{Number(c.amount).toLocaleString()}</span>
+												</div>
 											</div>
 										))}
 										{!workerDetail?.claims?.length && <p className="text-xs text-gray-400">No claims</p>}
@@ -725,9 +748,12 @@ function TabDisruptions({ users, disruptions, loadDisruptions, onSendOrder, onTr
 									<p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Disruptions ({workerDetail?.disruptions?.length ?? 0})</p>
 									<div className="space-y-1 max-h-36 overflow-y-auto">
 										{(workerDetail?.disruptions ?? []).slice(0, 10).map((d) => (
-											<div key={d.id} className="flex items-center gap-2 rounded-md bg-orange-50 px-3 py-1.5">
+											<div key={d.id} className="flex flex-wrap items-center gap-2 rounded-md bg-orange-50 px-3 py-1.5">
 												<span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${TYPE_BADGE[d.type] ?? ''}`}>{d.type}</span>
 												<span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${SEV_BADGE[d.severity] ?? ''}`}>{d.severity}</span>
+												{d.source && (
+													<span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${SOURCE_BADGE[d.source] ?? 'bg-gray-100 text-gray-600'}`}>{d.source}</span>
+												)}
 												<span className="ml-auto text-[10px] text-gray-400">{new Date(d.createdAt).toLocaleString()}</span>
 											</div>
 										))}
@@ -753,8 +779,8 @@ function TabDisruptions({ users, disruptions, loadDisruptions, onSendOrder, onTr
 							</svg>
 						</div>
 						<div>
-							<h2 className="text-sm font-semibold text-gray-800">Broadcast Disruption to City</h2>
-							<p className="text-xs text-gray-400">Affects all workers in that city at once</p>
+							<h2 className="text-sm font-semibold text-gray-800">Trigger disruption (manual)</h2>
+							<p className="text-xs text-gray-400">POST /admin/disruption — all workers in that city</p>
 						</div>
 					</div>
 					<form onSubmit={handleBroadcast} className="space-y-3">
@@ -768,11 +794,16 @@ function TabDisruptions({ users, disruptions, loadDisruptions, onSendOrder, onTr
 						<div className="flex gap-2">
 							<select value={broadcastType} onChange={(e) => setBroadcastType(e.target.value)}
 								className="flex-1 rounded-md border border-gray-300 px-2 py-2 text-sm">
-								<option>RAIN</option><option>TRAFFIC</option><option>BANDH</option>
+								<option>RAIN</option>
+								<option>TRAFFIC</option>
+								<option>BANDH</option>
+								<option>FLOOD</option>
 							</select>
 							<select value={broadcastSev} onChange={(e) => setBroadcastSev(e.target.value)}
 								className="flex-1 rounded-md border border-gray-300 px-2 py-2 text-sm">
-								<option>HIGH</option><option>LOW</option>
+								<option>HIGH</option>
+								<option>MEDIUM</option>
+								<option>LOW</option>
 							</select>
 						</div>
 						{broadcastMsg && (
@@ -782,7 +813,7 @@ function TabDisruptions({ users, disruptions, loadDisruptions, onSendOrder, onTr
 						)}
 						<button type="submit" disabled={broadcastBusy}
 							className="w-full rounded-md bg-red-500 py-2 text-sm font-semibold text-white transition hover:bg-red-600 disabled:opacity-50">
-							{broadcastBusy ? 'Broadcasting…' : 'Broadcast Disruption'}
+							{broadcastBusy ? 'Triggering…' : 'Trigger disruption'}
 						</button>
 					</form>
 				</Card>
@@ -857,8 +888,10 @@ function TabDisruptions({ users, disruptions, loadDisruptions, onSendOrder, onTr
 								<tr className="border-b border-gray-100 bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
 									<th className="px-5 py-3">ID</th>
 									<th className="px-5 py-3">Worker</th>
+									<th className="px-5 py-3">Location</th>
 									<th className="px-5 py-3">Type</th>
 									<th className="px-5 py-3">Severity</th>
+									<th className="px-5 py-3">Source</th>
 									<th className="px-5 py-3">Date</th>
 								</tr>
 							</thead>
@@ -867,11 +900,19 @@ function TabDisruptions({ users, disruptions, loadDisruptions, onSendOrder, onTr
 									<tr key={d.id} className="hover:bg-gray-50/60">
 										<td className="px-5 py-3 font-mono text-xs text-gray-400">#{d.id}</td>
 										<td className="px-5 py-3 font-semibold text-gray-800">{d.workerName}</td>
+										<td className="px-5 py-3 text-xs text-gray-600">{d.location || '—'}</td>
 										<td className="px-5 py-3">
 											<span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${TYPE_BADGE[d.type] ?? 'bg-gray-100 text-gray-600'}`}>{d.type}</span>
 										</td>
 										<td className="px-5 py-3">
 											<span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${SEV_BADGE[d.severity] ?? ''}`}>{d.severity}</span>
+										</td>
+										<td className="px-5 py-3">
+											{d.source ? (
+												<span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${SOURCE_BADGE[d.source] ?? 'bg-gray-100 text-gray-600'}`}>{d.source}</span>
+											) : (
+												<span className="text-xs text-gray-400">—</span>
+											)}
 										</td>
 										<td className="px-5 py-3 text-xs text-gray-400">{new Date(d.createdAt).toLocaleString()}</td>
 									</tr>
@@ -1105,7 +1146,7 @@ export default function AdminDashboard() {
 	}
 
 	async function onBroadcastDisruption(city, type, severity) {
-		const res = await api.post(`/admin/disruption/location?city=${encodeURIComponent(city)}`, { type, severity })
+		const res = await api.post('/admin/disruption', { type, severity, location: city })
 		await loadAll()
 		return res.data
 	}

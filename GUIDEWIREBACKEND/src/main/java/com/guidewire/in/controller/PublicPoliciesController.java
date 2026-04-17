@@ -3,6 +3,7 @@ package com.guidewire.in.controller;
 import com.guidewire.in.dto.PolicyResponse;
 import com.guidewire.in.entity.Policy;
 import com.guidewire.in.repository.PolicyRepository;
+import com.guidewire.in.web.ApiResponseBuilder;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -25,11 +26,11 @@ public class PublicPoliciesController {
 	}
 
 	@GetMapping
-	public ResponseEntity<List<PolicyResponse>> list() {
+	public ResponseEntity<?> list() {
 		List<PolicyResponse> list = policyRepository.findAllByOrderByIdAsc().stream()
 				.map(this::toDto)
 				.collect(Collectors.toList());
-		return ResponseEntity.ok(list);
+		return ApiResponseBuilder.ok("Policies loaded", list);
 	}
 
 	private PolicyResponse toDto(Policy p) {

@@ -19,7 +19,7 @@ public class JwtFilterConfig {
 	public FilterRegistrationBean<JwtFilter> jwtFilterRegistration(JwtFilter jwtFilter) {
 		FilterRegistrationBean<JwtFilter> registration = new FilterRegistrationBean<>();
 		registration.setFilter(jwtFilter);
-		registration.addUrlPatterns("/api/*", "/admin/*", "/worker/*");
+		registration.addUrlPatterns("/api/*", "/admin/*", "/worker/*", "/govt/*");
 		registration.setOrder(Ordered.HIGHEST_PRECEDENCE + 10);
 		return registration;
 	}

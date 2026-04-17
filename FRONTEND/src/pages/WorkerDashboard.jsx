@@ -1,15 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import api from '../api/api'
+import api, { uploadClaimProof } from '../api/api'
 import { useGeoLocation } from '../hooks/useGeoLocation'
 import WorkerShell from '../components/WorkerShell'
 import { useAuth } from '../context/AuthContext'
 
+/** Opens Razorpay’s checkout modal (visual only for your pitch — use test key via `VITE_RAZORPAY_KEY`). */
 const RAZORPAY_KEY = import.meta.env.VITE_RAZORPAY_KEY || 'rzp_test_1DP5mmOlF5G5ag'
 
 function openRazorpayCheckout(policy, onPaid, onDismiss) {
 	if (typeof window.Razorpay !== 'function') {
-		alert('Razorpay failed to load. Check index.html script tag.')
-		return
+		alert('Razorpay script did not load. Use “Buy policy (demo)” below — same outcome for the hackathon.')
+		return false
 	}
 	const amountPaise = Math.round(Number(policy.premium) * 100)
 	const rzp = new window.Razorpay({
@@ -24,6 +25,7 @@ function openRazorpayCheckout(policy, onPaid, onDismiss) {
 		modal: { ondismiss: onDismiss },
 	})
 	rzp.open()
+	return true
 }
 
 /* ──────── tiny shared UI ──────── */
@@ -77,6 +79,9 @@ function DisruptionAlert({ disruptions }) {
 				<p className="text-sm font-semibold text-red-700">
 					⚠ Disruption detected: {latest.type} ({latest.severity})
 				</p>
+				<p className="text-xs font-medium text-red-600/90 mt-0.5">
+					Source: {latest.source || 'MANUAL'}
+				</p>
 				<p className="text-xs text-red-500 mt-0.5">Your active order may have been cancelled.</p>
 			</div>
 		</div>
@@ -85,17 +90,34 @@ function DisruptionAlert({ disruptions }) {
 
 function ClaimAlert({ claims }) {
 	const latest = claims[0]
-	if (!latest) return null
+	if (!latest || latest.status !== 'APPROVED') return null
 	const age = Date.now() - new Date(latest.createdAt).getTime()
 	if (age > 5 * 60 * 1000) return null
+	const bullets =
+		latest.verificationBullets?.length > 0
+			? latest.verificationBullets
+			: (latest.reason || '')
+					.split('\n')
+					.map((s) => s.trim())
+					.filter(Boolean)
 	return (
 		<div className="flex items-start gap-3 rounded-xl bg-emerald-50 p-4 ring-1 ring-emerald-200">
 			<svg className="mt-0.5 h-5 w-5 flex-shrink-0 text-emerald-500" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
 				<path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
 			</svg>
-			<p className="text-sm font-semibold text-emerald-700">
-				💰 ₹{Number(latest.amount).toLocaleString()} credited to your wallet — {latest.reason}
-			</p>
+			<div>
+				<p className="text-sm font-semibold text-emerald-700">₹{Number(latest.amount).toLocaleString()} credited</p>
+				<p className="mt-1 text-xs font-semibold text-emerald-800">Reason</p>
+				<ul className="mt-1 space-y-0.5 text-xs text-emerald-800">
+					{bullets.map((line) => (
+						<li key={line}>{line}</li>
+					))}
+				</ul>
+				<p className="text-xs text-emerald-600/90 mt-1.5">
+					Confidence:{' '}
+					<span className="font-semibold text-emerald-700">{latest.confidenceScore ?? 0}%</span>
+				</p>
+			</div>
 		</div>
 	)
 }
@@ -164,7 +186,7 @@ function TabDashboard({ orders, claims, disruptions, geoLocation }) {
 	const pending   = orders.filter((o) => o.status === 'PENDING').length
 	const active    = orders.filter((o) => ['ACCEPTED', 'PICKED_UP'].includes(o.status)).length
 	const delivered = orders.filter((o) => o.status === 'DELIVERED').length
-	const lastClaim = claims[0]
+	const lastApproved = claims.find((c) => c.status === 'APPROVED')
 	const riskLevel = disruptions.length > 0 ? 'HIGH' : 'LOW'
 
 	return (
@@ -186,8 +208,8 @@ function TabDashboard({ orders, claims, disruptions, geoLocation }) {
 					icon={<svg className="h-6 w-6 text-blue-400" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M8.25 18.75a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m3 0h6m-9 0H3.375a1.125 1.125 0 01-1.125-1.125V14.25m17.25 4.5a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m3 0h1.125c.621 0 1.129-.504 1.09-1.124a17.902 17.902 0 00-3.213-9.193 2.056 2.056 0 00-1.58-.86H14.25M16.5 18.75h-2.25m0-11.177v-.958c0-.568-.422-1.048-.987-1.106a48.554 48.554 0 00-10.026 0 1.106 1.106 0 00-.987 1.106v7.635m12-6.677v6.677m0 4.5v-4.5m0 0h-12" /></svg>}
 				/>
 				<StatCard
-					label="Last claim (₹)"
-					value={lastClaim ? Number(lastClaim.amount).toLocaleString() : '—'}
+					label="Last approved claim (₹)"
+					value={lastApproved ? Number(lastApproved.amount).toLocaleString() : '—'}
 					accent={riskLevel === 'HIGH' ? 'bg-red-50' : 'bg-emerald-50'}
 					icon={
 						<svg className={`h-6 w-6 ${riskLevel === 'HIGH' ? 'text-red-400' : 'text-emerald-400'}`} fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
@@ -320,18 +342,45 @@ function TabOrders({ orders, onAction, busy }) {
 }
 
 /* ──────── TAB: Claims ──────── */
-function TabClaims({ claims, disruptions }) {
+const CLAIM_STATUS_STYLE = {
+	APPROVED: 'bg-emerald-100 text-emerald-800',
+	REVIEW: 'bg-amber-100 text-amber-900',
+	REJECTED: 'bg-red-100 text-red-800',
+}
+
+function TabClaims({ claims, disruptions, loadData }) {
+	const [uploadBusy, setUploadBusy] = useState(null)
+	const approvedSum = claims
+		.filter((c) => c.status === 'APPROVED')
+		.reduce((s, c) => s + Number(c.amount), 0)
+
+	async function onProofFile(claimId, e) {
+		const file = e.target.files?.[0]
+		if (!file) return
+		setUploadBusy(claimId)
+		try {
+			await uploadClaimProof(claimId, file)
+			await loadData()
+		} catch (err) {
+			alert(err.message || 'Upload failed')
+		} finally {
+			setUploadBusy(null)
+			e.target.value = ''
+		}
+	}
+
 	return (
 		<div className="space-y-6">
 			<DisruptionAlert disruptions={disruptions} />
 			<p className="rounded-lg bg-blue-50 px-4 py-2 text-sm text-blue-800 ring-1 ring-blue-100">
-				Approved claim amounts are added to your <strong>wallet</strong> automatically. Use Wallet to add or withdraw funds.
+				Claims are scored using your active order, location vs disruption, and optional photo proof (max 100). Score
+				≥70 approves payout to your <strong>wallet</strong>.
 			</p>
 			<Card>
-				<div className="flex items-center justify-between border-b border-gray-100 px-6 py-4">
+				<div className="flex flex-col gap-1 border-b border-gray-100 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
 					<h2 className="text-sm font-semibold text-gray-800">My Claims</h2>
 					<span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold text-emerald-700">
-						₹{claims.reduce((s, c) => s + Number(c.amount), 0).toLocaleString()} total
+						₹{approvedSum.toLocaleString()} paid (approved)
 					</span>
 				</div>
 				{claims.length === 0 ? (
@@ -343,6 +392,9 @@ function TabClaims({ claims, disruptions }) {
 								<tr className="border-b border-gray-100 bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
 									<th className="px-5 py-3">ID</th>
 									<th className="px-5 py-3">Amount</th>
+									<th className="px-5 py-3">Status</th>
+									<th className="px-5 py-3">Confidence</th>
+									<th className="px-5 py-3">Proof</th>
 									<th className="px-5 py-3">Reason</th>
 									<th className="px-5 py-3">Date</th>
 								</tr>
@@ -351,9 +403,78 @@ function TabClaims({ claims, disruptions }) {
 								{claims.map((c) => (
 									<tr key={c.id} className="hover:bg-gray-50/70">
 										<td className="px-5 py-3 font-mono text-xs text-gray-400">#{c.id}</td>
-										<td className="px-5 py-3 font-semibold text-emerald-700">₹{Number(c.amount).toLocaleString()}</td>
-										<td className="px-5 py-3 text-gray-600">{c.reason}</td>
-										<td className="px-5 py-3 text-xs text-gray-400">{new Date(c.createdAt).toLocaleString()}</td>
+										<td className="px-5 py-3 font-semibold text-gray-800">₹{Number(c.amount).toLocaleString()}</td>
+										<td className="px-5 py-3">
+											<span
+												className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-bold ${
+													CLAIM_STATUS_STYLE[c.status] ?? 'bg-gray-100 text-gray-600'
+												}`}
+											>
+												{c.status ?? 'REVIEW'}
+											</span>
+										</td>
+										<td className="px-5 py-3">
+											<span
+												className={`text-sm font-semibold ${
+													c.status === 'APPROVED'
+														? 'text-emerald-600'
+														: c.status === 'REJECTED'
+															? 'text-red-600'
+															: 'text-amber-600'
+												}`}
+											>
+												{c.confidenceScore ?? 0}%
+											</span>
+										</td>
+										<td className="px-5 py-3">
+											<div className="flex flex-col gap-1.5 min-w-[8rem]">
+												{c.proofImage ? (
+													<a
+														href={c.proofImage}
+														target="_blank"
+														rel="noreferrer"
+														className="text-xs font-medium text-blue-600 hover:underline truncate max-w-[10rem]"
+													>
+														View image
+													</a>
+												) : (
+													<span className="text-xs text-gray-400">None</span>
+												)}
+												{c.status === 'REVIEW' && (
+													<label className="cursor-pointer">
+														<input
+															type="file"
+															accept="image/*"
+															className="hidden"
+															disabled={uploadBusy === c.id}
+															onChange={(e) => onProofFile(c.id, e)}
+														/>
+														<span className="inline-block rounded-md bg-slate-100 px-2 py-1 text-[10px] font-semibold text-slate-700 hover:bg-slate-200">
+															{uploadBusy === c.id ? 'Uploading…' : 'Upload proof'}
+														</span>
+													</label>
+												)}
+											</div>
+										</td>
+										<td className="px-5 py-3 text-gray-700 max-w-[14rem]">
+											{c.status === 'APPROVED' && (
+												<p className="mb-1 text-sm font-semibold text-emerald-700">
+													₹{Number(c.amount).toLocaleString()} credited
+												</p>
+											)}
+											<p className="text-xs font-semibold text-gray-500">Reason</p>
+											<ul className="mt-0.5 space-y-0.5 text-xs text-gray-800">
+												{(c.verificationBullets?.length ? c.verificationBullets : []).map((line) => (
+													<li key={line}>{line}</li>
+												))}
+											</ul>
+											{!(c.verificationBullets?.length > 0) && c.reason && (
+												<p className="mt-1 text-xs text-gray-600 whitespace-pre-line">{c.reason}</p>
+											)}
+										</td>
+										<td className="px-5 py-3 text-xs text-gray-400 whitespace-nowrap">
+											{new Date(c.createdAt).toLocaleString()}
+										</td>
 									</tr>
 								))}
 							</tbody>
@@ -373,47 +494,67 @@ const PLAN_ACCENT = {
 }
 
 function TabPolicies({ policies, user, refreshProfile, refreshWallet, buyBusy, setBuyBusy }) {
+	async function buySimulated(p) {
+		setBuyBusy(p.id)
+		try {
+			await api.post(`/worker/buy-policy/${p.id}`, { source: 'SIMULATE' })
+			await refreshWallet()
+			await refreshProfile()
+			alert('Payment Successful ✅')
+		} catch (e) {
+			const msg = e.response?.data?.error ?? e.safeflexMessage ?? e.message ?? 'Purchase failed'
+			alert(msg)
+		} finally {
+			setBuyBusy(null)
+		}
+	}
+
 	async function buyWithWallet(p) {
 		setBuyBusy(p.id)
 		try {
 			await api.post(`/worker/buy-policy/${p.id}`, { source: 'WALLET' })
 			await refreshWallet()
 			await refreshProfile()
-			alert(`Policy ${p.name} activated!`)
+			alert('Payment Successful ✅')
 		} catch (e) {
-			alert(e.response?.data?.error ?? 'Purchase failed')
+			const msg = e.response?.data?.error ?? e.safeflexMessage ?? e.message ?? 'Purchase failed'
+			alert(msg)
 		} finally {
 			setBuyBusy(null)
 		}
 	}
 
 	function buyWithRazorpay(p) {
-		openRazorpayCheckout(
+		setBuyBusy(p.id)
+		const opened = openRazorpayCheckout(
 			p,
 			async (response) => {
-				setBuyBusy(p.id)
 				try {
 					await api.post(`/worker/buy-policy/${p.id}`, {
 						source: 'RAZORPAY',
-						razorpayPaymentId: response.razorpay_payment_id,
+						razorpayPaymentId: response.razorpay_payment_id || `rzp_demo_${Date.now()}`,
 					})
 					await refreshWallet()
 					await refreshProfile()
-					alert(`Payment successful. Policy ${p.name} activated!`)
+					alert('Payment Successful ✅')
 				} catch (e) {
-					alert(e.response?.data?.error ?? 'Could not confirm purchase on server')
+					const msg = e.response?.data?.error ?? e.safeflexMessage ?? e.message ?? 'Could not confirm on server'
+					alert(msg)
 				} finally {
 					setBuyBusy(null)
 				}
 			},
-			() => {},
+			() => setBuyBusy(null),
 		)
+		if (!opened) setBuyBusy(null)
 	}
 
 	return (
 		<div className="space-y-4">
 			<p className="text-sm text-gray-500">
-				Pay with Razorpay (test mode) or use your wallet balance (₹{Number(user?.walletBalance ?? 0).toLocaleString()}).
+				<span className="font-medium text-gray-700">Razorpay:</span> use the button below to show the real checkout UI (good for screenshots).
+				<span className="font-medium text-gray-700"> Demo / wallet</span> hits the same safe backend. Wallet: ₹
+				{Number(user?.walletBalance ?? 0).toLocaleString()}.
 			</p>
 			<div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
 				{policies.filter((p) => p.active).map((p) => {
@@ -445,7 +586,16 @@ function TabPolicies({ policies, user, refreshProfile, refreshWallet, buyBusy, s
 									onClick={() => buyWithRazorpay(p)}
 									className={`rounded-lg py-2.5 text-sm font-semibold text-white transition disabled:opacity-50 ${accent.btn}`}
 								>
-									{buyBusy === p.id ? 'Processing…' : 'Buy with Razorpay'}
+									{buyBusy === p.id ? 'Processing…' : 'Pay with Razorpay'}
+								</button>
+								<p className="text-center text-[10px] text-gray-500">Opens Razorpay checkout (for demo / slides)</p>
+								<button
+									type="button"
+									disabled={buyBusy === p.id || isActive}
+									onClick={() => buySimulated(p)}
+									className="rounded-lg border border-gray-300 bg-white py-2 text-sm font-semibold text-gray-800 transition hover:bg-gray-50 disabled:opacity-50"
+								>
+									Buy policy (demo — no modal)
 								</button>
 								<button
 									type="button"
@@ -483,8 +633,8 @@ function TabWallet({ wallet, refreshWallet, refreshProfile }) {
 			await refreshWallet()
 			await refreshProfile()
 			setMsg({ type: 'ok', text: 'Money added to wallet.' })
-		} catch {
-			setMsg({ type: 'err', text: 'Failed to add money.' })
+		} catch (err) {
+			setMsg({ type: 'err', text: err.response?.data?.error ?? err.safeflexMessage ?? 'Failed to add money.' })
 		} finally {
 			setBusy(false)
 		}
@@ -503,7 +653,7 @@ function TabWallet({ wallet, refreshWallet, refreshProfile }) {
 			await refreshProfile()
 			setMsg({ type: 'ok', text: 'Withdrawal processed.' })
 		} catch (err) {
-			setMsg({ type: 'err', text: err.response?.data?.error ?? 'Withdraw failed.' })
+			setMsg({ type: 'err', text: err.response?.data?.error ?? err.safeflexMessage ?? 'Withdraw failed.' })
 		} finally {
 			setBusy(false)
 		}
@@ -576,28 +726,11 @@ function TabProfile({ user, refreshProfile }) {
 	const [status, setStatus] = useState(null)
 	const fileRef = useRef(null)
 
-	const CLOUD_NAME = 'dyuqqcewv'
-	const UPLOAD_PRESET = 'ml_default'
-
 	function onFileChange(e) {
 		const f = e.target.files?.[0]
 		if (!f) return
 		setPhotoFile(f)
 		setPhotoPreview(URL.createObjectURL(f))
-	}
-
-	async function uploadToCloudinary(file) {
-		const fd = new FormData()
-		fd.append('file', file)
-		fd.append('upload_preset', UPLOAD_PRESET)
-		fd.append('folder', 'safeflex/profiles')
-		const res = await fetch(`https://api.cloudinary.com/v1_1/${CLOUD_NAME}/image/upload`, {
-			method: 'POST',
-			body: fd,
-		})
-		if (!res.ok) throw new Error('Cloudinary upload failed')
-		const data = await res.json()
-		return data.secure_url
 	}
 
 	async function handleSave(e) {
@@ -608,7 +741,10 @@ function TabProfile({ user, refreshProfile }) {
 			let profileImageUrl = user?.profileImageUrl ?? null
 			if (photoFile) {
 				setUploading(true)
-				profileImageUrl = await uploadToCloudinary(photoFile)
+				const fd = new FormData()
+				fd.append('image', photoFile)
+				const res = await api.post('/api/me/profile-image', fd)
+				profileImageUrl = res.data?.profileImageUrl ?? profileImageUrl
 				setUploading(false)
 			}
 			await api.put('/worker/profile', { name, location, profileImageUrl })
@@ -648,7 +784,7 @@ function TabProfile({ user, refreshProfile }) {
 							{photoFile ? photoFile.name : 'Upload photo'}
 							<input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={onFileChange} />
 						</label>
-						{uploading && <p className="text-xs text-blue-500">Uploading to Cloudinary…</p>}
+						{uploading && <p className="text-xs text-blue-500">Uploading photo…</p>}
 					</div>
 
 					{/* fields */}
@@ -699,6 +835,10 @@ export default function WorkerDashboard() {
 	const [busy, setBusy]               = useState(null)
 	const [wallet, setWallet]           = useState({ walletBalance: 0, activePolicyId: null })
 	const [buyBusy, setBuyBusy]         = useState(null)
+	const [claimPopup, setClaimPopup]   = useState(null)
+	const seenClaimIdsRef = useRef(new Set())
+	const claimBaselineDoneRef = useRef(false)
+	const [dataReady, setDataReady] = useState(false)
 
 	// GPS location — auto-requests on mount
 	const geoLocation = useGeoLocation({ autoRequest: true })
@@ -731,6 +871,9 @@ export default function WorkerDashboard() {
 				activePolicyId: wd.activePolicyId ?? null,
 			})
 		} catch { /* silent poll failure */ }
+		finally {
+			setDataReady(true)
+		}
 	}, [])
 
 	const loadPolicies = useCallback(async () => {
@@ -746,9 +889,38 @@ export default function WorkerDashboard() {
 	}, [loadData, loadPolicies])
 
 	useEffect(() => {
-		const t = setInterval(loadData, 4000)
+		const t = setInterval(loadData, 3500)
 		return () => clearInterval(t)
 	}, [loadData])
+
+	useEffect(() => {
+		if (!dataReady) return
+		if (!claimBaselineDoneRef.current) {
+			claims.forEach((c) => seenClaimIdsRef.current.add(c.id))
+			claimBaselineDoneRef.current = true
+			return
+		}
+		let t1
+		let t2
+		for (const c of claims) {
+			if (seenClaimIdsRef.current.has(c.id)) continue
+			seenClaimIdsRef.current.add(c.id)
+			setClaimPopup({ phase: 'processing' })
+			t1 = setTimeout(() => {
+				if (c.status === 'APPROVED') {
+					setClaimPopup({ phase: 'done', amount: c.amount })
+				} else {
+					setClaimPopup({ phase: 'review' })
+				}
+			}, 1000)
+			t2 = setTimeout(() => setClaimPopup(null), 9000)
+			break
+		}
+		return () => {
+			if (t1) clearTimeout(t1)
+			if (t2) clearTimeout(t2)
+		}
+	}, [claims, dataReady])
 
 	async function onAction(orderId, action) {
 		setBusy(orderId)
@@ -756,7 +928,7 @@ export default function WorkerDashboard() {
 			await api.post(`/worker/orders/${orderId}/${action}`)
 			await loadData()
 		} catch (err) {
-			alert(err.response?.data?.error ?? 'Action failed')
+			alert(err.response?.data?.error ?? err.safeflexMessage ?? 'Action failed')
 		} finally {
 			setBusy(null)
 		}
@@ -766,6 +938,37 @@ export default function WorkerDashboard() {
 
 	return (
 		<WorkerShell activeTab={activeTab} onTabChange={setActiveTab} pendingCount={pendingCount}>
+			{claimPopup && (
+				<div
+					role="dialog"
+					aria-live="polite"
+					className="fixed inset-0 z-[100] flex items-center justify-center bg-black/45 p-4"
+				>
+					<div className="w-full max-w-sm rounded-2xl bg-white px-6 py-8 text-center shadow-2xl ring-1 ring-gray-200">
+						{claimPopup.phase === 'processing' && (
+							<>
+								<div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-2 border-blue-500 border-t-transparent" />
+								<p className="text-lg font-semibold text-gray-800">Processing claim…</p>
+								<p className="mt-1 text-sm text-gray-500">Verifying your order and location</p>
+							</>
+						)}
+						{claimPopup.phase === 'done' && (
+							<>
+								<p className="text-2xl font-bold text-emerald-600">
+									₹{Number(claimPopup.amount).toLocaleString()} credited instantly 💰
+								</p>
+								<p className="mt-2 text-sm text-gray-600">Added to your wallet</p>
+							</>
+						)}
+						{claimPopup.phase === 'review' && (
+							<>
+								<p className="text-lg font-semibold text-amber-700">Claim recorded</p>
+								<p className="mt-1 text-sm text-gray-600">Under review — check back soon</p>
+							</>
+						)}
+					</div>
+				</div>
+			)}
 			{activeTab === 'dashboard' && (
 				<TabDashboard orders={orders} claims={claims} disruptions={disruptions} geoLocation={geoLocation} />
 			)}
@@ -773,7 +976,7 @@ export default function WorkerDashboard() {
 				<TabOrders orders={orders} onAction={onAction} busy={busy} />
 			)}
 			{activeTab === 'claims' && (
-				<TabClaims claims={claims} disruptions={disruptions} />
+				<TabClaims claims={claims} disruptions={disruptions} loadData={loadData} />
 			)}
 			{activeTab === 'wallet' && (
 				<TabWallet wallet={wallet} refreshWallet={refreshWallet} refreshProfile={refreshProfile} />

@@ -10,6 +10,7 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
+import jakarta.persistence.PostLoad;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import lombok.AllArgsConstructor;
@@ -30,12 +31,19 @@ public class Disruption {
 	private Long id;
 
 	@Enumerated(EnumType.STRING)
-	@Column(nullable = false)
+	@Column(nullable = false, length = 32)
 	private DisruptionType type;
 
 	@Enumerated(EnumType.STRING)
-	@Column(nullable = false)
+	@Column(nullable = false, length = 32)
 	private DisruptionSeverity severity;
+
+	/** City / area label for this event (e.g. Hyderabad). */
+	private String location;
+
+	@Enumerated(EnumType.STRING)
+	@Column(name = "disruption_source", nullable = false, length = 32)
+	private DisruptionSource source;
 
 	@ManyToOne(fetch = FetchType.LAZY)
 	@JoinColumn(name = "worker_id", nullable = false)
@@ -47,5 +55,11 @@ public class Disruption {
 	@PrePersist
 	void onCreate() {
 		if (createdAt == null) createdAt = LocalDateTime.now();
+		if (source == null) source = DisruptionSource.MANUAL;
+	}
+
+	@PostLoad
+	void onLoad() {
+		if (source == null) source = DisruptionSource.MANUAL;
 	}
 }

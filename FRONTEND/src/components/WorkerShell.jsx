@@ -70,14 +70,25 @@ const TAB_TITLES = {
 export default function WorkerShell({ activeTab, onTabChange, children, pendingCount = 0 }) {
 	const { user, logout } = useAuth()
 	const [collapsed, setCollapsed] = useState(false)
+	const [mobileNavOpen, setMobileNavOpen] = useState(false)
 
 	const initials = (user?.name ?? 'W')[0].toUpperCase()
 
 	return (
 		<div className="flex h-screen overflow-hidden bg-gray-100">
+			{mobileNavOpen && (
+				<button
+					type="button"
+					className="fixed inset-0 z-40 bg-black/50 md:hidden"
+					aria-label="Close menu"
+					onClick={() => setMobileNavOpen(false)}
+				/>
+			)}
 			{/* ── Sidebar ── */}
 			<aside
-				className={`flex flex-shrink-0 flex-col bg-gray-900 text-white transition-all duration-300 ${collapsed ? 'w-16' : 'w-60'}`}
+				className={`fixed inset-y-0 left-0 z-50 flex flex-shrink-0 flex-col bg-gray-900 text-white transition-all duration-300 md:static md:z-auto ${
+					collapsed ? 'w-16' : 'w-60'
+				} ${mobileNavOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}`}
 			>
 				{/* logo row */}
 				<div className={`flex h-16 items-center border-b border-gray-700 px-4 ${collapsed ? 'justify-center' : 'justify-between'}`}>
@@ -103,7 +114,10 @@ export default function WorkerShell({ activeTab, onTabChange, children, pendingC
 						return (
 							<button
 								key={item.id}
-								onClick={() => onTabChange(item.id)}
+								onClick={() => {
+									onTabChange(item.id)
+									setMobileNavOpen(false)
+								}}
 								className={`relative flex w-full items-center gap-3 px-4 py-2.5 text-sm font-medium transition-colors duration-150
 									${active ? 'bg-gray-700 text-white' : 'text-gray-400 hover:bg-gray-800 hover:text-white'}`}
 							>
@@ -149,12 +163,24 @@ export default function WorkerShell({ activeTab, onTabChange, children, pendingC
 			</aside>
 
 			{/* ── Main ── */}
-			<div className="flex flex-1 flex-col overflow-hidden">
+			<div className="flex min-w-0 flex-1 flex-col overflow-hidden md:pl-0">
 				{/* top bar */}
-				<header className="flex h-16 flex-shrink-0 items-center justify-between border-b border-gray-200 bg-white px-6 shadow-sm">
-					<div>
-						<h1 className="text-base font-bold text-gray-800">{TAB_TITLES[activeTab] ?? 'Dashboard'}</h1>
-						<p className="text-xs text-gray-400">SafeFlex Worker Panel</p>
+				<header className="flex h-16 flex-shrink-0 items-center justify-between border-b border-gray-200 bg-white px-4 shadow-sm sm:px-6">
+					<div className="flex min-w-0 items-center gap-3">
+						<button
+							type="button"
+							className="rounded-md p-2 text-gray-600 hover:bg-gray-100 md:hidden"
+							aria-label="Open menu"
+							onClick={() => setMobileNavOpen(true)}
+						>
+							<svg className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+								<path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
+							</svg>
+						</button>
+						<div className="min-w-0">
+							<h1 className="truncate text-base font-bold text-gray-800">{TAB_TITLES[activeTab] ?? 'Dashboard'}</h1>
+							<p className="text-xs text-gray-400">SafeFlex Worker Panel</p>
+						</div>
 					</div>
 					<div className="flex items-center gap-3">
 						<span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">
