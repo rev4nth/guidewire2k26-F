@@ -2,6 +2,7 @@ package com.guidewire.in.controller;
 
 import com.guidewire.in.dto.BuyPolicyRequest;
 import com.guidewire.in.dto.WalletAmountRequest;
+import com.guidewire.in.dto.WorkerPolicyResponse;
 import com.guidewire.in.entity.Policy;
 import com.guidewire.in.entity.Role;
 import com.guidewire.in.entity.User;
@@ -9,6 +10,7 @@ import com.guidewire.in.repository.PolicyRepository;
 import com.guidewire.in.repository.UserRepository;
 import com.guidewire.in.security.JwtFilter;
 import com.guidewire.in.service.FinanceService;
+import com.guidewire.in.service.WorkerPolicyPricingService;
 import com.guidewire.in.web.ApiResponseBuilder;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Value;
@@ -25,7 +27,9 @@ import org.springframework.web.bind.annotation.RestController;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/worker")
@@ -34,16 +38,19 @@ public class WorkerWalletController {
 	private final UserRepository userRepository;
 	private final PolicyRepository policyRepository;
 	private final FinanceService financeService;
+	private final WorkerPolicyPricingService workerPolicyPricingService;
 
 	@Value("${app.demo.mode:true}")
 	private boolean demoMode;
 
 	public WorkerWalletController(UserRepository userRepository,
 			PolicyRepository policyRepository,
-			FinanceService financeService) {
+			FinanceService financeService,
+			WorkerPolicyPricingService workerPolicyPricingService) {
 		this.userRepository   = userRepository;
 		this.policyRepository = policyRepository;
 		this.financeService   = financeService;
+		this.workerPolicyPricingService = workerPolicyPricingService;
 	}
 
 	private Long uid(HttpServletRequest req) {
@@ -108,6 +115,37 @@ public class WorkerWalletController {
 	}
 
 	/**
+	 * Catalog for the logged-in worker: premiums include +30% when they have no active plan and a recent HIGH disruption.
+	 */
+	@GetMapping("/policies")
+	@Transactional(readOnly = true)
+	public ResponseEntity<?> workerPolicies(HttpServletRequest req) {
+		User w = requireWorker(req);
+		if (w == null) {
+			return ApiResponseBuilder.fail(HttpStatus.FORBIDDEN, "Forbidden");
+		}
+		w = userRepository.findById(w.getId()).orElseThrow();
+		User worker = w;
+		List<WorkerPolicyResponse> list = policyRepository.findAllByActiveTrueOrderByIdAsc().stream()
+				.map(p -> {
+					BigDecimal base = p.getPremium();
+					BigDecimal eff = workerPolicyPricingService.effectivePremium(p, worker);
+					boolean applied = eff.compareTo(base) > 0;
+					return new WorkerPolicyResponse(
+							p.getId(),
+							p.getName(),
+							eff,
+							base,
+							p.getCoverage(),
+							p.isActive(),
+							applied,
+							applied ? WorkerPolicyPricingService.SURCHARGE_PERCENT : null);
+				})
+				.collect(Collectors.toList());
+		return ApiResponseBuilder.ok("Policies loaded", list);
+	}
+
+	/**
 	 * POST /worker/buy-policy/{policyId}
 	 * Body: { "source": "WALLET" | "SIMULATE" | "RAZORPAY", "razorpayPaymentId": "..." }
 	 * Demo mode: always activates policy and returns success (SIMULATE/RAZORPAY skip wallet; WALLET deducts when possible).
@@ -127,9 +165,9 @@ public class WorkerWalletController {
 		String source = body != null && body.getSource() != null
 				? body.getSource().trim().toUpperCase()
 				: "SIMULATE";
-		BigDecimal premium = policy.getPremium();
 
 		w = userRepository.findById(w.getId()).orElseThrow();
+		BigDecimal premium = workerPolicyPricingService.effectivePremium(policy, w);
 
 		if (demoMode) {
 			if ("WALLET".equals(source)) {

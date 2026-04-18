@@ -37,17 +37,31 @@ api.interceptors.request.use((config) => {
 	if (token) {
 		config.headers.Authorization = `Bearer ${token}`
 	}
+	// Default `Content-Type: application/json` breaks multipart: server gets JSON (~empty) instead of FormData + boundary.
+	if (config.data instanceof FormData) {
+		const h = config.headers
+		if (h && typeof h.delete === 'function') {
+			h.delete('Content-Type')
+		} else if (h) {
+			delete h['Content-Type']
+		}
+	}
 	return config
 })
 
-/** Multipart claim proof — avoids forcing JSON Content-Type on FormData. */
-export async function uploadClaimProof(claimId, file) {
+/**
+ * POST /worker/claim/{claimId}/upload-proof — multipart image + optional description.
+ * Legacy /worker/upload-proof still works on the server.
+ */
+export async function uploadClaimProof(claimId, file, description) {
 	const baseURL = import.meta.env.VITE_API_URL ?? 'http://localhost:2509'
 	const token = localStorage.getItem('safeflex_token')
 	const fd = new FormData()
-	fd.append('claimId', String(claimId))
 	fd.append('image', file)
-	const res = await fetch(`${baseURL}/worker/upload-proof`, {
+	if (description != null && String(description).trim() !== '') {
+		fd.append('description', String(description).trim())
+	}
+	const res = await fetch(`${baseURL}/worker/claim/${claimId}/upload-proof`, {
 		method: 'POST',
 		headers: token ? { Authorization: `Bearer ${token}` } : {},
 		body: fd,

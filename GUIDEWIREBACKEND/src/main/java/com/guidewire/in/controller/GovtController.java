@@ -28,7 +28,6 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -99,15 +98,19 @@ public class GovtController {
 	@Transactional(readOnly = true)
 	public ResponseEntity<?> listClaims(HttpServletRequest req) {
 		if (!isGovt(req)) return ApiResponseBuilder.fail(HttpStatus.FORBIDDEN, "Forbidden");
-		List<GovtClaimRowResponse> list = claimRepository.findAll().stream()
-				.sorted(Comparator.comparing(c -> c.getCreatedAt(), Comparator.nullsLast(Comparator.reverseOrder())))
+		List<GovtClaimRowResponse> list = claimRepository.findAllWithWorkerAndDisruptionOrderByCreatedAtDesc().stream()
 				.map(c -> new GovtClaimRowResponse(
 						c.getId(),
 						c.getWorker().getId(),
 						c.getWorker().getName(),
 						c.getAmount(),
 						c.getConfidenceScore(),
-						c.getStatus() != null ? c.getStatus().name() : "REVIEW"))
+						c.getStatus() != null ? c.getStatus().name() : "PENDING_PROOF",
+						c.getProofImageUrl(),
+						c.getProofDescription(),
+						c.getDisruption() != null && c.getDisruption().getSeverity() != null
+								? c.getDisruption().getSeverity().name()
+								: null))
 				.collect(Collectors.toList());
 		return ApiResponseBuilder.ok("Claims loaded", list);
 	}

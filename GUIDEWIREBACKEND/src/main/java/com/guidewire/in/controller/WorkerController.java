@@ -64,16 +64,16 @@ public class WorkerController {
 		User worker = userRepository.findById(id).orElse(null);
 		if (worker == null) return ApiResponseBuilder.fail(HttpStatus.NOT_FOUND, "Worker not found");
 
-		List<OrderResponse> orders = orderRepository.findByWorkerOrderByCreatedAtDesc(worker)
+		List<OrderResponse> orders = orderRepository.findByWorkerWithWorkerFetched(worker)
 				.stream().map(o -> new OrderResponse(o.getId(), o.getWorker().getId(),
 						o.getWorker().getName(), o.getStatus().name(), o.getCreatedAt()))
 				.collect(Collectors.toList());
 
-		List<ClaimResponse> claims = claimRepository.findByWorkerOrderByCreatedAtDesc(worker)
+		List<ClaimResponse> claims = claimRepository.findByWorkerWithAssociations(worker)
 				.stream().map(ClaimResponse::fromEntity)
 				.collect(Collectors.toList());
 
-		List<DisruptionResponse> disruptions = disruptionRepository.findByWorkerOrderByCreatedAtDesc(worker)
+		List<DisruptionResponse> disruptions = disruptionRepository.findByWorkerWithWorkerFetched(worker)
 				.stream().map(d -> new DisruptionResponse(d.getId(), d.getType().name(),
 						d.getSeverity().name(), d.getLocation(),
 						d.getSource() != null ? d.getSource().name() : "MANUAL",
@@ -92,7 +92,7 @@ public class WorkerController {
 		Long uid = Long.valueOf(attr.toString());
 		User worker = userRepository.findById(uid).orElse(null);
 		if (worker == null) return ApiResponseBuilder.fail(HttpStatus.UNAUTHORIZED, "Unauthorized");
-		List<DisruptionResponse> list = disruptionRepository.findByWorkerOrderByCreatedAtDesc(worker)
+		List<DisruptionResponse> list = disruptionRepository.findByWorkerWithWorkerFetched(worker)
 				.stream().map(d -> new DisruptionResponse(d.getId(), d.getType().name(),
 						d.getSeverity().name(), d.getLocation(),
 						d.getSource() != null ? d.getSource().name() : "MANUAL",

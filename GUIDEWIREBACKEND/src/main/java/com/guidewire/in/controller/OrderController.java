@@ -107,7 +107,7 @@ public class OrderController {
 		if (uid == null) return ApiResponseBuilder.fail(HttpStatus.UNAUTHORIZED, "Unauthorized");
 		User worker = userRepository.findById(uid).orElse(null);
 		if (worker == null) return ApiResponseBuilder.fail(HttpStatus.UNAUTHORIZED, "Unauthorized");
-		List<OrderResponse> list = orderRepository.findByWorkerOrderByCreatedAtDesc(worker)
+		List<OrderResponse> list = orderRepository.findByWorkerWithWorkerFetched(worker)
 				.stream().map(this::toDto).collect(Collectors.toList());
 		return ApiResponseBuilder.ok("Orders loaded", list);
 	}
@@ -131,7 +131,7 @@ public class OrderController {
 	public ResponseEntity<?> cancel(HttpServletRequest req, @PathVariable Long id) {
 		Long uid = currentUserId(req);
 		if (uid == null) return ApiResponseBuilder.fail(HttpStatus.UNAUTHORIZED, "Unauthorized");
-		Order order = orderRepository.findById(id).orElse(null);
+		Order order = orderRepository.findByIdWithWorker(id).orElse(null);
 		if (order == null) return ApiResponseBuilder.fail(HttpStatus.NOT_FOUND, "Order not found");
 		if (!order.getWorker().getId().equals(uid))
 			return ApiResponseBuilder.fail(HttpStatus.FORBIDDEN, "Forbidden");
@@ -146,7 +146,7 @@ public class OrderController {
 			OrderStatus from, OrderStatus to) {
 		Long uid = currentUserId(req);
 		if (uid == null) return ApiResponseBuilder.fail(HttpStatus.UNAUTHORIZED, "Unauthorized");
-		Order order = orderRepository.findById(orderId).orElse(null);
+		Order order = orderRepository.findByIdWithWorker(orderId).orElse(null);
 		if (order == null) return ApiResponseBuilder.fail(HttpStatus.NOT_FOUND, "Order not found");
 		if (!order.getWorker().getId().equals(uid))
 			return ApiResponseBuilder.fail(HttpStatus.FORBIDDEN, "Forbidden");

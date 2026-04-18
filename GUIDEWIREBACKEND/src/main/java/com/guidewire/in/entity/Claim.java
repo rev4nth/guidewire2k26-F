@@ -1,9 +1,8 @@
 package com.guidewire.in.entity;
 
 import jakarta.persistence.Column;
+import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
-import jakarta.persistence.EnumType;
-import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -49,19 +48,30 @@ public class Claim {
 	@Column(nullable = false)
 	private String reason;
 
-	/** Cloudinary or other URL */
-	private String proofImage;
+	/** Proof image URL (e.g. Cloudinary). DB column kept as proof_image for compatibility. */
+	@Column(name = "proof_image")
+	private String proofImageUrl;
+
+	@Column(length = 1024)
+	private String proofDescription;
 
 	@Column(nullable = false)
 	private int confidenceScore;
 
-	@Enumerated(EnumType.STRING)
-	@Column(nullable = false)
-	private ClaimStatus status = ClaimStatus.REVIEW;
+	@Convert(converter = ClaimStatusConverter.class)
+	@Column(nullable = false, length = 32)
+	private ClaimStatus status = ClaimStatus.PENDING_PROOF;
 
 	/** True after wallet credit for this claim (idempotent). */
 	@Column(nullable = false)
 	private boolean walletPaid;
+
+	/**
+	 * Rupees actually credited (equals {@link #amount} for full payout; half of that for partial).
+	 * Null for legacy rows before this column existed — treat as {@code amount} when {@link #walletPaid}.
+	 */
+	@Column(precision = 14, scale = 2)
+	private BigDecimal payoutCredited;
 
 	@Column(nullable = false)
 	private LocalDateTime createdAt;
@@ -69,7 +79,7 @@ public class Claim {
 	@PrePersist
 	void onCreate() {
 		if (createdAt == null) createdAt = LocalDateTime.now();
-		if (status == null) status = ClaimStatus.REVIEW;
+		if (status == null) status = ClaimStatus.PENDING_PROOF;
 	}
 
 	@PostLoad

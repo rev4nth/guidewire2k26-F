@@ -4,3 +4,6 @@ app:
     cloud-name: dyuqqcewv
     api-key: "515121515438561"
     api-secret: "-W6iun_Y8SAcrmhtVLbwrPoyAxo"
+  # HIGH disruption in this window (hours) triggers +30% for workers with no active plan
+  policy:
+    disruption-surcharge-window-hours: 72

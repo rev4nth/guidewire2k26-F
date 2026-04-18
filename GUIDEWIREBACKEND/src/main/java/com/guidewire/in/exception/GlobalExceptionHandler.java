@@ -31,7 +31,8 @@ public class GlobalExceptionHandler {
 
 	@ExceptionHandler(Exception.class)
 	public ResponseEntity<ApiFailedResponse> any(Exception ex) {
+		// Avoid leaking Hibernate / internal messages to API clients
 		return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-				.body(new ApiFailedResponse(ex.getMessage() != null ? ex.getMessage() : "Internal error"));
+				.body(new ApiFailedResponse("Something went wrong. Please try again."));
 	}
 }

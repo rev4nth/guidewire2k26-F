@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import api, { uploadClaimProof } from '../api/api'
+import { proofImageDisplayUrl } from '../utils/proofImageUrl'
 import { useGeoLocation } from '../hooks/useGeoLocation'
 import WorkerShell from '../components/WorkerShell'
 import { useAuth } from '../context/AuthContext'
@@ -100,13 +101,29 @@ function ClaimAlert({ claims }) {
 					.split('\n')
 					.map((s) => s.trim())
 					.filter(Boolean)
+	const isHigh = latest.disruptionSeverity === 'HIGH'
 	return (
-		<div className="flex items-start gap-3 rounded-xl bg-emerald-50 p-4 ring-1 ring-emerald-200">
-			<svg className="mt-0.5 h-5 w-5 flex-shrink-0 text-emerald-500" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+		<div
+			className={`flex items-start gap-3 rounded-xl p-4 ring-1 ${
+				isHigh ? 'bg-red-50 ring-red-200' : 'bg-emerald-50 ring-emerald-200'
+			}`}
+		>
+			<svg
+				className={`mt-0.5 h-5 w-5 flex-shrink-0 ${isHigh ? 'text-red-500' : 'text-emerald-500'}`}
+				fill="none"
+				stroke="currentColor"
+				strokeWidth={2}
+				viewBox="0 0 24 24"
+			>
 				<path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
 			</svg>
 			<div>
-				<p className="text-sm font-semibold text-emerald-700">₹{Number(latest.amount).toLocaleString()} credited</p>
+				{isHigh && (
+					<p className="text-xs font-semibold uppercase tracking-wide text-red-700">High severity disruption</p>
+				)}
+				<p className={`text-sm font-semibold ${isHigh ? 'text-red-800' : 'text-emerald-700'}`}>
+					₹{Number(latest.amountCredited ?? latest.amount).toLocaleString()} credited
+				</p>
 				<p className="mt-1 text-xs font-semibold text-emerald-800">Reason</p>
 				<ul className="mt-1 space-y-0.5 text-xs text-emerald-800">
 					{bullets.map((line) => (
@@ -117,6 +134,11 @@ function ClaimAlert({ claims }) {
 					Confidence:{' '}
 					<span className="font-semibold text-emerald-700">{latest.confidenceScore ?? 0}%</span>
 				</p>
+				{isHigh && (
+					<p className="mt-2 text-xs font-medium text-amber-900">
+						⚠️ Due to high risk, policy prices increased by 30%
+					</p>
+				)}
 			</div>
 		</div>
 	)
@@ -344,38 +366,91 @@ function TabOrders({ orders, onAction, busy }) {
 /* ──────── TAB: Claims ──────── */
 const CLAIM_STATUS_STYLE = {
 	APPROVED: 'bg-emerald-100 text-emerald-800',
-	REVIEW: 'bg-amber-100 text-amber-900',
+	PENDING_PROOF: 'bg-amber-100 text-amber-900',
 	REJECTED: 'bg-red-100 text-red-800',
+}
+
+const SEVERITY_BADGE = {
+	LOW: 'bg-yellow-100 text-yellow-900 ring-1 ring-yellow-200',
+	MEDIUM: 'bg-orange-100 text-orange-900 ring-1 ring-orange-200',
+	HIGH: 'bg-red-100 text-red-900 ring-1 ring-red-200',
+}
+
+function SeverityBadge({ severity }) {
+	if (!severity) {
+		return <span className="text-xs text-gray-400">—</span>
+	}
+	return (
+		<span
+			className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
+				SEVERITY_BADGE[severity] ?? 'bg-gray-100 text-gray-700'
+			}`}
+		>
+			{severity}
+		</span>
+	)
 }
 
 function TabClaims({ claims, disruptions, loadData }) {
 	const [uploadBusy, setUploadBusy] = useState(null)
+	const [proofDesc, setProofDesc] = useState({})
 	const approvedSum = claims
 		.filter((c) => c.status === 'APPROVED')
-		.reduce((s, c) => s + Number(c.amount), 0)
+		.reduce((s, c) => s + Number(c.amountCredited ?? c.amount ?? 0), 0)
 
-	async function onProofFile(claimId, e) {
-		const file = e.target.files?.[0]
-		if (!file) return
+	async function submitProof(claimId) {
+		const input = document.getElementById(`proof-file-${claimId}`)
+		const file = input?.files?.[0]
+		const desc = (proofDesc[claimId] ?? '').trim()
+		if (!file) {
+			alert('Choose an image file first.')
+			return
+		}
+		if (desc.length < 10) {
+			alert('Please describe what happened (at least 10 characters). This is required with your photo.')
+			return
+		}
 		setUploadBusy(claimId)
 		try {
-			await uploadClaimProof(claimId, file)
+			await uploadClaimProof(claimId, file, desc)
 			await loadData()
+			setProofDesc((d) => {
+				const next = { ...d }
+				delete next[claimId]
+				return next
+			})
+			if (input) input.value = ''
 		} catch (err) {
 			alert(err.message || 'Upload failed')
 		} finally {
 			setUploadBusy(null)
-			e.target.value = ''
 		}
 	}
 
 	return (
 		<div className="space-y-6">
 			<DisruptionAlert disruptions={disruptions} />
-			<p className="rounded-lg bg-blue-50 px-4 py-2 text-sm text-blue-800 ring-1 ring-blue-100">
-				Claims are scored using your active order, location vs disruption, and optional photo proof (max 100). Score
-				≥70 approves payout to your <strong>wallet</strong>.
-			</p>
+			<div className="rounded-xl border border-blue-100 bg-gradient-to-br from-blue-50 to-indigo-50 px-4 py-4 text-sm text-blue-900 ring-1 ring-blue-100/80 shadow-sm">
+				<p className="font-semibold text-blue-950">Severity-based processing</p>
+				<ul className="mt-2 space-y-1.5 text-blue-900/90 text-xs">
+					<li>
+						<span className="font-semibold text-yellow-800">LOW</span> — No automatic payout; upload a photo and explanation, then an
+						admin reviews and may pay full plan coverage, half, or decline.
+					</li>
+					<li>
+						<span className="font-semibold text-orange-800">MEDIUM</span> — If confidence ≥70% at claim time, payout runs automatically;
+						otherwise upload proof and wait for admin (full / half / none based on your plan).
+					</li>
+					<li>
+						<span className="font-semibold text-red-800">HIGH</span> — Auto-approved with payout; active plan premiums may rise by
+						30% (risk surge).
+					</li>
+				</ul>
+				<p className="mt-3 text-xs font-medium text-blue-800">
+					Proof upload requires an image plus a short written explanation. Confidence uses: active order (+50), location match (+30),
+					proof (+20).
+				</p>
+			</div>
 			<Card>
 				<div className="flex flex-col gap-1 border-b border-gray-100 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
 					<h2 className="text-sm font-semibold text-gray-800">My Claims</h2>
@@ -391,6 +466,7 @@ function TabClaims({ claims, disruptions, loadData }) {
 							<thead>
 								<tr className="border-b border-gray-100 bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
 									<th className="px-5 py-3">ID</th>
+									<th className="px-5 py-3">Severity</th>
 									<th className="px-5 py-3">Amount</th>
 									<th className="px-5 py-3">Status</th>
 									<th className="px-5 py-3">Confidence</th>
@@ -403,14 +479,24 @@ function TabClaims({ claims, disruptions, loadData }) {
 								{claims.map((c) => (
 									<tr key={c.id} className="hover:bg-gray-50/70">
 										<td className="px-5 py-3 font-mono text-xs text-gray-400">#{c.id}</td>
-										<td className="px-5 py-3 font-semibold text-gray-800">₹{Number(c.amount).toLocaleString()}</td>
+										<td className="px-5 py-3 align-top">
+											<SeverityBadge severity={c.disruptionSeverity} />
+										</td>
+										<td className="px-5 py-3 font-semibold text-gray-800">
+											<span className="block">Plan max ₹{Number(c.amount).toLocaleString()}</span>
+											{c.status === 'APPROVED' && c.amountCredited != null && Number(c.amountCredited) !== Number(c.amount) && (
+												<span className="text-[11px] font-normal text-emerald-700">
+													Paid ₹{Number(c.amountCredited).toLocaleString()}
+												</span>
+											)}
+										</td>
 										<td className="px-5 py-3">
 											<span
 												className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-bold ${
 													CLAIM_STATUS_STYLE[c.status] ?? 'bg-gray-100 text-gray-600'
 												}`}
 											>
-												{c.status ?? 'REVIEW'}
+												{c.status ?? 'PENDING_PROOF'}
 											</span>
 										</td>
 										<td className="px-5 py-3">
@@ -426,40 +512,72 @@ function TabClaims({ claims, disruptions, loadData }) {
 												{c.confidenceScore ?? 0}%
 											</span>
 										</td>
-										<td className="px-5 py-3">
-											<div className="flex flex-col gap-1.5 min-w-[8rem]">
-												{c.proofImage ? (
+										<td className="px-5 py-3 align-top">
+											<div className="flex min-w-[10rem] max-w-[14rem] flex-col gap-2">
+												{(c.proofImageUrl || c.proofImage) ? (
 													<a
-														href={c.proofImage}
+														href={proofImageDisplayUrl(c.proofImageUrl || c.proofImage)}
 														target="_blank"
 														rel="noreferrer"
-														className="text-xs font-medium text-blue-600 hover:underline truncate max-w-[10rem]"
+														className="text-xs font-semibold text-blue-600 hover:underline"
 													>
-														View image
+														View proof
 													</a>
 												) : (
-													<span className="text-xs text-gray-400">None</span>
+													<span className="text-xs text-gray-400">No proof yet</span>
 												)}
-												{c.status === 'REVIEW' && (
-													<label className="cursor-pointer">
+												{c.status === 'PENDING_PROOF' && (
+													<div className="rounded-lg border border-amber-200 bg-amber-50/80 p-2 space-y-2">
+														<label className="block text-[10px] font-semibold uppercase tracking-wide text-amber-900">
+															Explanation <span className="font-normal text-amber-700">(required, min 10 chars)</span>
+														</label>
+														<textarea
+															rows={2}
+															value={proofDesc[c.id] ?? ''}
+															onChange={(e) =>
+																setProofDesc((d) => ({ ...d, [c.id]: e.target.value }))
+															}
+															placeholder="e.g. Photo of damaged goods"
+															className="w-full rounded border border-amber-200 bg-white px-2 py-1 text-xs text-gray-800 placeholder:text-gray-400"
+														/>
 														<input
+															id={`proof-file-${c.id}`}
 															type="file"
 															accept="image/*"
-															className="hidden"
+															className="block w-full text-[10px] text-gray-600 file:mr-2 file:rounded file:border-0 file:bg-amber-200 file:px-2 file:py-1 file:text-[10px] file:font-semibold"
 															disabled={uploadBusy === c.id}
-															onChange={(e) => onProofFile(c.id, e)}
 														/>
-														<span className="inline-block rounded-md bg-slate-100 px-2 py-1 text-[10px] font-semibold text-slate-700 hover:bg-slate-200">
+														<button
+															type="button"
+															disabled={uploadBusy === c.id}
+															onClick={() => submitProof(c.id)}
+															className="w-full rounded-md bg-amber-600 py-1.5 text-[11px] font-semibold text-white hover:bg-amber-700 disabled:opacity-50"
+														>
 															{uploadBusy === c.id ? 'Uploading…' : 'Upload proof'}
-														</span>
-													</label>
+														</button>
+													</div>
 												)}
 											</div>
 										</td>
-										<td className="px-5 py-3 text-gray-700 max-w-[14rem]">
-											{c.status === 'APPROVED' && (
+										<td className="px-5 py-3 text-gray-700 max-w-[16rem]">
+											{c.disruptionSeverity === 'LOW' && c.status === 'PENDING_PROOF' && (
+												<div className="mb-2 rounded-lg border border-yellow-200 bg-yellow-50 px-2 py-1.5 text-xs text-yellow-900">
+													⚠️ Claim requires verification — upload proof or wait for admin review.
+												</div>
+											)}
+											{c.disruptionSeverity === 'HIGH' && c.status === 'APPROVED' && (
+												<div className="mb-2 space-y-1 rounded-lg border border-red-200 bg-red-50 px-2 py-2 text-xs text-red-900">
+													<p className="font-semibold">🔥 High severity disruption detected</p>
+													<p>✔ Claim auto-approved</p>
+													<p>✔ Compensation credited</p>
+													<p className="font-medium text-amber-900 pt-1 border-t border-red-100 mt-1">
+														⚠️ Due to high risk, policy prices increased by 30%
+													</p>
+												</div>
+											)}
+											{c.status === 'APPROVED' && c.disruptionSeverity !== 'HIGH' && (
 												<p className="mb-1 text-sm font-semibold text-emerald-700">
-													₹{Number(c.amount).toLocaleString()} credited
+													₹{Number(c.amountCredited ?? c.amount).toLocaleString()} credited
 												</p>
 											)}
 											<p className="text-xs font-semibold text-gray-500">Reason</p>
@@ -549,8 +667,19 @@ function TabPolicies({ policies, user, refreshProfile, refreshWallet, buyBusy, s
 		if (!opened) setBuyBusy(null)
 	}
 
+	const showDisruptionSurcharge = policies.some((p) => p.disruptionSurchargeApplied)
+
 	return (
 		<div className="space-y-4">
+			{showDisruptionSurcharge && (
+				<div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950 ring-1 ring-amber-100">
+					<p className="font-semibold">⚠️ Disruption pricing active</p>
+					<p className="mt-1 text-xs text-amber-900">
+						You don&apos;t have an active plan and a recent high-severity disruption applies to your account. Premiums are{' '}
+						<span className="font-bold">+30%</span> until you&apos;re covered.
+					</p>
+				</div>
+			)}
 			<p className="text-sm text-gray-500">
 				<span className="font-medium text-gray-700">Razorpay:</span> use the button below to show the real checkout UI (good for screenshots).
 				<span className="font-medium text-gray-700"> Demo / wallet</span> hits the same safe backend. Wallet: ₹
@@ -571,6 +700,9 @@ function TabPolicies({ policies, user, refreshProfile, refreshWallet, buyBusy, s
 									<span className="rounded-full bg-emerald-600 px-2 py-0.5 text-[10px] font-bold text-white">ACTIVE</span>
 								)}
 							</div>
+							{p.disruptionSurchargeApplied && p.basePremium != null && (
+								<p className="text-lg text-gray-400 line-through">₹{Number(p.basePremium).toLocaleString()}</p>
+							)}
 							<p className="mb-1 text-3xl font-bold text-gray-900">₹{Number(p.premium).toLocaleString()}</p>
 							<p className="mb-4 text-xs text-gray-500">per month</p>
 							<div className="mb-4 flex items-center gap-2 rounded-lg bg-white/60 p-3">
@@ -878,7 +1010,7 @@ export default function WorkerDashboard() {
 
 	const loadPolicies = useCallback(async () => {
 		try {
-			const res = await api.get('/policies')
+			const res = await api.get('/worker/policies')
 			setPolicies(res.data ?? [])
 		} catch { /* ignore */ }
 	}, [])
@@ -908,9 +1040,16 @@ export default function WorkerDashboard() {
 			setClaimPopup({ phase: 'processing' })
 			t1 = setTimeout(() => {
 				if (c.status === 'APPROVED') {
-					setClaimPopup({ phase: 'done', amount: c.amount })
+					setClaimPopup({
+						phase: 'done',
+						amount: c.amount,
+						amountCredited: c.amountCredited,
+						severity: c.disruptionSeverity ?? null,
+					})
+				} else if (c.status === 'REJECTED') {
+					setClaimPopup({ phase: 'rejected' })
 				} else {
-					setClaimPopup({ phase: 'review' })
+					setClaimPopup({ phase: 'review', status: c.status, severity: c.disruptionSeverity ?? null })
 				}
 			}, 1000)
 			t2 = setTimeout(() => setClaimPopup(null), 9000)
@@ -954,16 +1093,54 @@ export default function WorkerDashboard() {
 						)}
 						{claimPopup.phase === 'done' && (
 							<>
-								<p className="text-2xl font-bold text-emerald-600">
-									₹{Number(claimPopup.amount).toLocaleString()} credited instantly 💰
-								</p>
-								<p className="mt-2 text-sm text-gray-600">Added to your wallet</p>
+								{claimPopup.severity === 'HIGH' ? (
+									<div className="space-y-2 text-left">
+										<p className="text-center text-sm font-semibold text-red-700">🔥 High severity disruption detected</p>
+										<p className="text-center text-sm text-gray-800">✔ Claim auto-approved</p>
+										<p className="text-center text-2xl font-bold text-emerald-600">
+											₹{Number(claimPopup.amountCredited ?? claimPopup.amount).toLocaleString()} credited
+										</p>
+										<p className="text-center text-sm text-gray-600">Added to your wallet</p>
+										<p className="rounded-lg bg-amber-50 px-3 py-2 text-center text-xs font-medium text-amber-900 ring-1 ring-amber-200">
+											⚠️ Due to high risk, policy prices increased by 30%
+										</p>
+									</div>
+								) : (
+									<>
+										<p className="text-2xl font-bold text-emerald-600">
+											₹{Number(claimPopup.amountCredited ?? claimPopup.amount).toLocaleString()} credited
+										</p>
+										<p className="mt-2 text-sm text-gray-600">Added to your wallet</p>
+									</>
+								)}
+							</>
+						)}
+						{claimPopup.phase === 'rejected' && (
+							<>
+								<p className="text-lg font-semibold text-red-700">Claim not approved</p>
+								<p className="mt-1 text-sm text-gray-600">Score was below the threshold.</p>
 							</>
 						)}
 						{claimPopup.phase === 'review' && (
 							<>
-								<p className="text-lg font-semibold text-amber-700">Claim recorded</p>
-								<p className="mt-1 text-sm text-gray-600">Under review — check back soon</p>
+								{claimPopup.severity === 'LOW' ? (
+									<>
+										<p className="text-lg font-semibold text-yellow-800">⚠️ Claim requires verification</p>
+										<p className="mt-1 text-sm text-gray-600">
+											Low-severity events are not paid automatically. Use Upload proof on the Claims tab or wait for admin
+											review.
+										</p>
+									</>
+								) : (
+									<>
+										<p className="text-lg font-semibold text-amber-700">Claim recorded</p>
+										<p className="mt-1 text-sm text-gray-600">
+											{claimPopup.status === 'PENDING_PROOF'
+												? 'Upload proof on the Claims tab to improve your score.'
+												: 'Check the Claims tab for updates.'}
+										</p>
+									</>
+								)}
 							</>
 						)}
 					</div>

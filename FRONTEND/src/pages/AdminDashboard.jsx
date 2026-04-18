@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import api from '../api/api'
 import { useAuth } from '../context/AuthContext'
 import AdminShell from '../components/AdminShell'
+import { proofImageDisplayUrl } from '../utils/proofImageUrl'
 
 /* ─────────── helpers ─────────── */
 function parseApiError(data) {
@@ -592,7 +593,11 @@ function TabDisruptions({ users, disruptions, loadDisruptions, onSendOrder, onTr
 		FLOOD: 'bg-cyan-100 text-cyan-800',
 	}
 	const SOURCE_BADGE = { AUTO: 'bg-blue-100 text-blue-800', MANUAL: 'bg-amber-100 text-amber-900', GOVT: 'bg-emerald-100 text-emerald-900' }
-	const CLAIM_STATUS_MINI = { APPROVED: 'bg-emerald-200 text-emerald-900', REVIEW: 'bg-amber-200 text-amber-950', REJECTED: 'bg-red-200 text-red-900' }
+	const CLAIM_STATUS_MINI = {
+		APPROVED: 'bg-emerald-200 text-emerald-900',
+		PENDING_PROOF: 'bg-amber-200 text-amber-950',
+		REJECTED: 'bg-red-200 text-red-900',
+	}
 	const ORDER_STATUS_BADGE = {
 		PENDING: 'bg-orange-100 text-orange-700', ACCEPTED: 'bg-blue-100 text-blue-700',
 		PICKED_UP: 'bg-purple-100 text-purple-700', DELIVERED: 'bg-emerald-100 text-emerald-700',
@@ -730,7 +735,17 @@ function TabDisruptions({ users, disruptions, loadDisruptions, onSendOrder, onTr
 										{(workerDetail?.claims ?? []).slice(0, 10).map((c) => (
 											<div key={c.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-emerald-50 px-3 py-1.5">
 												<span className="text-xs text-gray-600 min-w-0 flex-1 truncate">{c.reason}</span>
-												<div className="flex items-center gap-2 shrink-0">
+												<div className="flex flex-wrap items-center gap-2 shrink-0">
+													{(c.proofImageUrl || c.proofImage) && (
+														<a
+															href={proofImageDisplayUrl(c.proofImageUrl || c.proofImage)}
+															target="_blank"
+															rel="noreferrer"
+															className="text-[10px] font-semibold text-blue-600 hover:underline"
+														>
+															Proof
+														</a>
+													)}
 													{c.status && (
 														<span className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold ${CLAIM_STATUS_MINI[c.status] ?? 'bg-gray-200 text-gray-700'}`}>{c.status}</span>
 													)}
@@ -1029,6 +1044,150 @@ function TabProfile({ user, photoPreview, fileInputRef, handlePhotoSelect, handl
 	)
 }
 
+const ADMIN_CLAIM_SEV = {
+	LOW: 'bg-yellow-100 text-yellow-900 ring-1 ring-yellow-200',
+	MEDIUM: 'bg-orange-100 text-orange-900 ring-1 ring-orange-200',
+	HIGH: 'bg-red-100 text-red-900 ring-1 ring-red-200',
+}
+
+function TabClaimReviews({ claims, payoutBusy, onSettle }) {
+	return (
+		<div className="space-y-6">
+			<Card>
+				<CardHeader
+					title="Claim reviews (proof)"
+					badge={<Badge count={claims.length} color="bg-amber-100 text-amber-800" />}
+				/>
+				<p className="border-b border-gray-100 px-6 pb-4 text-xs text-gray-500">
+					Review the worker&apos;s photo and written explanation. Pay <span className="font-semibold text-gray-700">full</span> or{' '}
+					<span className="font-semibold text-gray-700">half</span> of their plan coverage, or{' '}
+					<span className="font-semibold text-gray-700">no payout</span> (reject).
+				</p>
+				{claims.length === 0 ? (
+					<EmptyState
+						icon={
+							<svg className="h-7 w-7 text-gray-300" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
+								<path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+							</svg>
+						}
+						text="No claims are pending review"
+					/>
+				) : (
+					<div className="overflow-x-auto">
+						<table className="min-w-full text-sm">
+							<thead>
+								<tr className="border-b border-gray-100 bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+									<th className="px-4 py-3">Worker</th>
+									<th className="px-4 py-3">Plan</th>
+									<th className="px-4 py-3">Severity</th>
+									<th className="px-4 py-3">Photo</th>
+									<th className="px-4 py-3 min-w-[12rem]">Explanation</th>
+									<th className="px-4 py-3 text-right">Full</th>
+									<th className="px-4 py-3 text-right">Half</th>
+									<th className="px-4 py-3 text-right">Actions</th>
+								</tr>
+							</thead>
+							<tbody className="divide-y divide-gray-50">
+								{claims.map((c) => {
+									const busy = payoutBusy === c.claimId
+									const canPay = c.proofComplete
+									return (
+										<tr key={c.claimId} className="align-top hover:bg-gray-50/80">
+											<td className="px-4 py-3">
+												<p className="font-medium text-gray-900">{c.workerName}</p>
+												<p className="font-mono text-[10px] text-gray-400">#{c.claimId}</p>
+												<p className="text-[10px] text-gray-500">Score {c.confidenceScore ?? 0}%</p>
+											</td>
+											<td className="px-4 py-3 text-gray-700">{c.policyName ?? '—'}</td>
+											<td className="px-4 py-3">
+												{c.disruptionSeverity ? (
+													<span
+														className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
+															ADMIN_CLAIM_SEV[c.disruptionSeverity] ?? 'bg-gray-100 text-gray-700'
+														}`}
+													>
+														{c.disruptionSeverity}
+													</span>
+												) : (
+													<span className="text-gray-400">—</span>
+												)}
+											</td>
+											<td className="px-4 py-3">
+												{c.proofImageUrl ? (
+													<a
+														href={proofImageDisplayUrl(c.proofImageUrl)}
+														target="_blank"
+														rel="noreferrer"
+														className="block"
+													>
+														<img
+															src={proofImageDisplayUrl(c.proofImageUrl)}
+															alt="Proof"
+															className="h-16 w-16 rounded-lg object-cover ring-1 ring-gray-200 hover:opacity-90"
+															loading="lazy"
+															referrerPolicy="no-referrer"
+															onError={(e) => {
+																e.currentTarget.onerror = null
+																e.currentTarget.src =
+																	'https://placehold.co/120x120/f1f5f9/64748b?text=Preview'
+															}}
+														/>
+													</a>
+												) : (
+													<span className="text-xs text-gray-400">No image</span>
+												)}
+											</td>
+											<td className="px-4 py-3 text-xs text-gray-800 max-w-[20rem] whitespace-pre-wrap">
+												{c.proofDescription || <span className="text-gray-400">—</span>}
+											</td>
+											<td className="px-4 py-3 text-right font-semibold text-gray-900">
+												₹{Number(c.fullCoverageAmount).toLocaleString()}
+											</td>
+											<td className="px-4 py-3 text-right font-semibold text-indigo-800">
+												₹{Number(c.halfCoverageAmount).toLocaleString()}
+											</td>
+											<td className="px-4 py-3 text-right">
+												<div className="flex flex-col gap-1.5 sm:flex-row sm:justify-end sm:flex-wrap">
+													<button
+														type="button"
+														disabled={busy || !canPay}
+														title={!canPay ? 'Worker must upload image and explanation first' : 'Pay full coverage'}
+														onClick={() => onSettle(c.claimId, 'FULL')}
+														className="rounded-md bg-emerald-600 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-40"
+													>
+														{busy ? '…' : 'Full'}
+													</button>
+													<button
+														type="button"
+														disabled={busy || !canPay}
+														title={!canPay ? 'Worker must upload image and explanation first' : 'Pay half of coverage'}
+														onClick={() => onSettle(c.claimId, 'HALF')}
+														className="rounded-md bg-indigo-600 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-40"
+													>
+														Half
+													</button>
+													<button
+														type="button"
+														disabled={busy}
+														onClick={() => onSettle(c.claimId, 'NONE')}
+														className="rounded-md border border-red-200 bg-red-50 px-2.5 py-1 text-[11px] font-semibold text-red-700 hover:bg-red-100 disabled:opacity-40"
+													>
+														Reject
+													</button>
+												</div>
+											</td>
+										</tr>
+									)
+								})}
+							</tbody>
+						</table>
+					</div>
+				)}
+			</Card>
+		</div>
+	)
+}
+
 /* ════════════════════════════════════════════════
    ROOT COMPONENT
 ════════════════════════════════════════════════ */
@@ -1043,8 +1202,10 @@ export default function AdminDashboard() {
 	const [disruptions, setDisruptions] = useState([])
 	const [stats, setStats]             = useState(null)
 	const [finance, setFinance]       = useState(null)
+	const [pendingClaims, setPendingClaims] = useState([])
 	const [loadError, setLoadError]     = useState('')
 	const [busyId, setBusyId]           = useState(null)
+	const [payoutBusy, setPayoutBusy]   = useState(null)
 
 	/* create-user form */
 	const [newName, setNewName]       = useState('')
@@ -1096,13 +1257,14 @@ export default function AdminDashboard() {
 	const loadAll = useCallback(async () => {
 		setLoadError('')
 		try {
-			const [pRes, uRes, polRes, statsRes, disRes, finRes] = await Promise.all([
+			const [pRes, uRes, polRes, statsRes, disRes, finRes, claimsRes] = await Promise.all([
 				api.get('/admin/pending-registrations'),
 				api.get('/admin/users'),
 				api.get('/admin/policies'),
 				api.get('/admin/stats'),
 				api.get('/admin/disruptions'),
 				api.get('/admin/finance'),
+				api.get('/admin/claims/pending-review'),
 			])
 			setPending(pRes.data ?? [])
 			setUsers(uRes.data ?? [])
@@ -1110,6 +1272,7 @@ export default function AdminDashboard() {
 			setStats(statsRes.data ?? null)
 			setDisruptions(disRes.data ?? [])
 			setFinance(finRes.data ?? null)
+			setPendingClaims(claimsRes.data ?? [])
 		} catch (e) {
 			setLoadError(parseApiError(e.response?.data))
 		}
@@ -1199,6 +1362,20 @@ export default function AdminDashboard() {
 		setPhotoFile(f); setPhotoStatus(null)
 		setPhotoPreview(f ? URL.createObjectURL(f) : null)
 	}
+	async function settleClaimPayout(claimId, payout) {
+		const label = payout === 'NONE' ? 'reject this claim (no payout)?' : `pay ${payout === 'FULL' ? 'full' : 'half'} coverage?`
+		if (!window.confirm(`Confirm: ${label}`)) return
+		setPayoutBusy(claimId)
+		try {
+			await api.post(`/admin/claim/${claimId}/payout`, { payout })
+			await loadAll()
+		} catch (e) {
+			alert(parseApiError(e.response?.data))
+		} finally {
+			setPayoutBusy(null)
+		}
+	}
+
 	async function handlePhotoUpload(e) {
 		e.preventDefault()
 		if (!photoFile) { setPhotoStatus({ type: 'err', text: 'Select an image first.' }); return }
@@ -1226,6 +1403,9 @@ export default function AdminDashboard() {
 		<AdminShell activeTab={activeTab} onTabChange={setActiveTab}>
 			{activeTab === 'dashboard'   && <TabDashboard users={users} pending={pending} loadError={loadError} stats={stats} />}
 			{activeTab === 'users'       && <TabUsers {...sharedUserProps} />}
+			{activeTab === 'claims'      && (
+				<TabClaimReviews claims={pendingClaims} payoutBusy={payoutBusy} onSettle={settleClaimPayout} />
+			)}
 			{activeTab === 'policies'    && <TabPolicies policies={policies} onSavePolicy={onSavePolicy} />}
 			{activeTab === 'finance'     && <TabFinance finance={finance} loadError={loadError} />}
 			{activeTab === 'disruptions' && (

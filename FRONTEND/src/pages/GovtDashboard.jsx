@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import api from '../api/api'
 import GovtShell from '../components/GovtShell'
+import { proofImageDisplayUrl } from '../utils/proofImageUrl'
 
 function Card({ children, className = '' }) {
 	return <div className={`rounded-xl bg-white shadow-sm ring-1 ring-slate-200/80 ${className}`}>{children}</div>
@@ -20,8 +21,14 @@ function StatCard({ label, value, accent, icon }) {
 
 const CLAIM_BADGE = {
 	APPROVED: 'bg-emerald-100 text-emerald-800',
-	REVIEW: 'bg-amber-100 text-amber-950',
+	PENDING_PROOF: 'bg-amber-100 text-amber-950',
 	REJECTED: 'bg-red-100 text-red-800',
+}
+
+const SEV_BADGE = {
+	LOW: 'bg-yellow-100 text-yellow-900 ring-1 ring-yellow-200',
+	MEDIUM: 'bg-orange-100 text-orange-900 ring-1 ring-orange-200',
+	HIGH: 'bg-red-100 text-red-900 ring-1 ring-red-200',
 }
 
 function TabDashboard({ stats, loadError }) {
@@ -142,8 +149,10 @@ function TabClaimsTable({ claims, onVerify, verifyBusy }) {
 							<tr className="border-b border-slate-100 bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
 								<th className="px-4 py-3">ID</th>
 								<th className="px-4 py-3">Worker</th>
+								<th className="px-4 py-3">Severity</th>
 								<th className="px-4 py-3 text-right">Amount</th>
-								<th className="px-4 py-3">Score</th>
+								<th className="px-4 py-3">Confidence</th>
+								<th className="px-4 py-3">Proof</th>
 								<th className="px-4 py-3">Status</th>
 								<th className="px-4 py-3 text-right">Actions</th>
 							</tr>
@@ -156,8 +165,35 @@ function TabClaimsTable({ claims, onVerify, verifyBusy }) {
 									<tr key={c.claimId} className="hover:bg-slate-50/80">
 										<td className="px-4 py-3 font-mono text-xs text-slate-400">#{c.claimId}</td>
 										<td className="px-4 py-3 font-medium text-slate-800">{c.workerName}</td>
+										<td className="px-4 py-3">
+											{c.disruptionSeverity ? (
+												<span
+													className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
+														SEV_BADGE[c.disruptionSeverity] ?? 'bg-slate-100 text-slate-700'
+													}`}
+												>
+													{c.disruptionSeverity}
+												</span>
+											) : (
+												<span className="text-xs text-slate-400">—</span>
+											)}
+										</td>
 										<td className="px-4 py-3 text-right font-semibold text-slate-800">₹{Number(c.amount).toLocaleString()}</td>
 										<td className="px-4 py-3 text-slate-600">{c.confidenceScore ?? 0}/100</td>
+										<td className="px-4 py-3 max-w-[8rem]">
+											{c.proofImageUrl ? (
+												<a
+													href={proofImageDisplayUrl(c.proofImageUrl)}
+													target="_blank"
+													rel="noreferrer"
+													className="text-xs font-medium text-emerald-700 hover:underline"
+												>
+													View proof
+												</a>
+											) : (
+												<span className="text-xs text-slate-400">—</span>
+											)}
+										</td>
 										<td className="px-4 py-3">
 											<span
 												className={`inline-block rounded-full px-2.5 py-0.5 text-xs font-semibold ${

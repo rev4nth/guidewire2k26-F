@@ -16,4 +16,8 @@ public class GovtClaimRowResponse {
 	private BigDecimal amount;
 	private int confidenceScore;
 	private String status;
+	private String proofImageUrl;
+	private String proofDescription;
+	/** Disruption severity at claim time (LOW / MEDIUM / HIGH). */
+	private String disruptionSeverity;
 }

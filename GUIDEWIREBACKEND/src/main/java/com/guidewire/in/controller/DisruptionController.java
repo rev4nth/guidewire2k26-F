@@ -200,8 +200,7 @@ public class DisruptionController {
 	@GetMapping("/disruptions")
 	public ResponseEntity<?> listAll(HttpServletRequest req) {
 		if (!isAdmin(req)) return ApiResponseBuilder.fail(HttpStatus.FORBIDDEN, "Forbidden");
-		List<DisruptionResponse> list = disruptionRepository.findAll().stream()
-				.sorted((a, b) -> b.getCreatedAt().compareTo(a.getCreatedAt()))
+		List<DisruptionResponse> list = disruptionRepository.findAllWithWorkerOrderByCreatedAtDesc().stream()
 				.map(DisruptionController::toDto)
 				.collect(Collectors.toList());
 		return ApiResponseBuilder.ok("Disruptions loaded", list);

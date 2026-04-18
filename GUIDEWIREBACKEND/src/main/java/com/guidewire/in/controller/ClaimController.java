@@ -37,7 +37,7 @@ public class ClaimController {
 		Long uid = Long.valueOf(attr.toString());
 		User worker = userRepository.findById(uid).orElse(null);
 		if (worker == null) return ApiResponseBuilder.fail(HttpStatus.UNAUTHORIZED, "Unauthorized");
-		List<ClaimResponse> list = claimRepository.findByWorkerOrderByCreatedAtDesc(worker)
+		List<ClaimResponse> list = claimRepository.findByWorkerWithAssociations(worker)
 				.stream()
 				.map(ClaimResponse::fromEntity)
 				.collect(Collectors.toList());

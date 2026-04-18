@@ -8,4 +8,6 @@ import java.util.Optional;
 public interface PolicyRepository extends JpaRepository<Policy, Long> {
 	Optional<Policy> findByNameIgnoreCase(String name);
 	java.util.List<Policy> findAllByOrderByIdAsc();
+
+	java.util.List<Policy> findAllByActiveTrueOrderByIdAsc();
 }

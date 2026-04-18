@@ -3,10 +3,13 @@ package com.guidewire.in.pricing;
 import com.guidewire.in.entity.Policy;
 import com.guidewire.in.entity.PricingHistory;
 import com.guidewire.in.entity.RiskLevel;
+import com.guidewire.in.repository.PolicyRepository;
 import com.guidewire.in.repository.PricingHistoryRepository;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.util.List;
 
 @Service
 public class PricingService {
@@ -18,13 +21,36 @@ public class PricingService {
 	private final WeatherService weatherService;
 	private final RiskEngineService riskEngine;
 	private final PricingHistoryRepository historyRepository;
+	private final PolicyRepository policyRepository;
 
 	public PricingService(WeatherService weatherService,
 			RiskEngineService riskEngine,
-			PricingHistoryRepository historyRepository) {
+			PricingHistoryRepository historyRepository,
+			PolicyRepository policyRepository) {
 		this.weatherService = weatherService;
 		this.riskEngine = riskEngine;
 		this.historyRepository = historyRepository;
+		this.policyRepository = policyRepository;
+	}
+
+	/**
+	 * Market surge after HIGH-severity disruption. Policies are not region-scoped in this schema —
+	 * all active plan premiums are increased by {@code percentage}% (demo-safe).
+	 *
+	 * @param location worker / disruption city (reserved for future regional pricing)
+	 */
+	public void increasePrices(String location, int percentage) {
+		List<Policy> policies = policyRepository.findAllByActiveTrueOrderByIdAsc();
+		if (policies.isEmpty()) {
+			return;
+		}
+		BigDecimal factor = BigDecimal.ONE.add(
+				BigDecimal.valueOf(percentage).divide(BigDecimal.valueOf(100), 8, RoundingMode.HALF_UP));
+		for (Policy policy : policies) {
+			BigDecimal newPrice = policy.getPremium().multiply(factor).setScale(2, RoundingMode.HALF_UP);
+			policy.setPremium(newPrice);
+		}
+		policyRepository.saveAll(policies);
 	}
 
 	public PricingResult price(String city, Policy policy) {
